@@ -28,9 +28,12 @@ spec:
           args:
             - |
               if [ ! -f /state/.runner ]; then
+                [ -n "${RUNNER_TOKEN:-}" ] || { echo "no saved state and RUNNER_TOKEN empty/missing: run deploy/runner/install.sh" >&2; exit 1; }
                 ./config.sh --unattended --url https://github.com/radityaaa43/iroha3-rd-dfabi \
                   --token "$RUNNER_TOKEN" --name iroha3-incluster --labels iroha3 --replace
-                cp -a .runner .credentials .credentials_rsaparams /state/
+                # .runner is the sentinel: copy it last so a partial copy re-registers
+                cp -a .credentials .credentials_rsaparams /state/
+                cp -a .runner /state/
               else
                 cp -a /state/.runner /state/.credentials /state/.credentials_rsaparams .
               fi
@@ -41,6 +44,7 @@ spec:
                 secretKeyRef:
                   name: gha-runner-registration
                   key: RUNNER_TOKEN
+                  optional: true
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: "1", memory: 1Gi}
