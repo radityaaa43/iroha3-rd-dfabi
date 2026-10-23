@@ -1,0 +1,12 @@
+name: runner-info
+on: workflow_dispatch
+jobs:
+  info:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "nproc=$(nproc)"
+          free -g
+          df -h / /mnt || true
+          swapon --show || true
+          docker info --format 'docker root={{.DockerRootDir}}'
