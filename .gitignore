@@ -1,0 +1,20 @@
+# Cluster kubeconfig: admin credentials, never commit
+alibaba.yaml
+*.kubeconfig
+
+# Generated per-peer secrets (keys, signed genesis)
+secrets/
+*.key
+*.priv
+
+# Local runtime state
+storage/
+out/
+*.log
+.env
+.env.*
+
+# Operator-only material
+network/out/
+wallets/
+*.docx
