@@ -13,7 +13,7 @@ set -euo pipefail
 
 IROHA_COMMIT=071e281e778c5928cab4d6e007b7ddc9b050df27
 SRC=${1:?usage: build-image.sh <iroha-source-dir> [image-tag]}
-TAG=${2:-iroha3-rd:${IROHA_COMMIT:0:8}-stark}
+TAG=${2:-${TAG:-iroha3-rd:${IROHA_COMMIT:0:8}-stark}}
 
 if [ "$(git -C "$SRC" rev-parse HEAD)" != "$IROHA_COMMIT" ]; then
   echo "source at $SRC is not $IROHA_COMMIT" >&2
