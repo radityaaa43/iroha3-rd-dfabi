@@ -19,14 +19,29 @@ if [[ -e $OUT ]]; then
   exit 1
 fi
 
+# network/out holds every private key: it must be gitignored before we write it.
+if ! git check-ignore -q out/.probe; then
+  echo "refusing to run: network/out is not gitignored." >&2
+  exit 1
+fi
+
 umask 077
 mkdir -p "$OUT" "$PUB"
 RAW="$OUT/.raw"
 mkdir "$RAW"
+TMP="$(mktemp -d)"
+done_ok=0
+# On any exit: drop scratch dirs; on failure also drop the half-built (never
+# used) out/ so a rerun is possible.
+trap 'rm -rf "$RAW" "$TMP"; [[ $done_ok == 1 ]] || rm -rf "$OUT"' EXIT
 
 # Kagami writes as the image user; run as the host user so files are ours.
 # No --seed: keys come from OS entropy. Chain id is a fresh random UUID.
 CHAIN_ID="$(uuidgen | tr 'A-Z' 'a-z')"
+if [[ ! $CHAIN_ID =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  echo "uuidgen returned no usable chain id" >&2
+  exit 1
+fi
 docker run --rm --user "$(id -u):$(id -g)" -v "$RAW:/work/out" \
   --entrypoint kagami "$IMAGE" localnet \
   --peers 4 --consensus-mode permissioned --chain-id "$CHAIN_ID" \
@@ -112,6 +127,9 @@ for i, p in enumerate(parties):
     # one shared client identity from localnet; point Torii at this party
     c = open(f"{raw}/client.toml").read()
     c = re.sub(r'^torii_url = .*$', 'torii_url = "http://%s:8080/"' % dns(p), c, flags=re.M)
+    # drop the upstream sample [basic_auth] table (mad_hatter / sample password)
+    c = re.sub(r'(?ms)^\[basic_auth\]\n.*?(?=^\[|\Z)', '', c)
+    assert "basic_auth" not in c and "mad_hatter" not in c
     with open(f"{d}/client.toml", "w") as f:
         f.write(c)
     m = re.search(r'pop_hex = "([0-9a-f]+)"\npublic_key = "%s"' % pk[i], t)
@@ -141,12 +159,14 @@ find "$OUT" -type f -exec chmod 600 {} +
 # Real-binary validation of every converted config against the signed genesis,
 # mounted at the same paths the pod will use.
 for p in "${PARTIES[@]}"; do
-  st="$(mktemp -d)"
+  st="$TMP/$p"
+  mkdir "$st"
   docker run --rm --user "$(id -u):$(id -g)" \
     -v "$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PUB:/genesis:ro" -v "$st:/storage" \
     --entrypoint iroha3d "$IMAGE" --check-config --config /config/peer.toml 2>&1 | tail -1
-  rm -rf "$st"
 done
+
+done_ok=1
 
 cat <<EOF
 Done. chain id: $CHAIN_ID

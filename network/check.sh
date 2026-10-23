@@ -72,8 +72,17 @@ for p in "${PARTIES[@]}"; do
   check "$p: Torii bind 0.0.0.0:8080" grep -Eq '^address = "addr:0\.0\.0\.0:8080#[0-9A-F]{4}"$' "$t"
   check "$p: public_address $dns:1337" \
     grep -Eq "^public_address = \"addr:${dns//./\\.}:1337#[0-9A-F]{4}\"$" "$t"
-  check "$p: trusted_peers use DNS names of all 4 parties" \
-    bash -c 'for q in bi bank-a bank-b bank-c; do grep -E "^trusted_peers = " "$1" | grep -q "@addr:$q-0\.$q\.iroha3\.svc\.cluster\.local:1337#" || exit 1; done' _ "$t"
+  # trusted_peers: exactly 4 entries (all parties, self included, as localnet
+  # emits), each exactly <peers.json key>@addr:<party dns>:1337#XXXX, in order.
+  check "$p: trusted_peers = 4 exact key@dns:1337 pairs" \
+    bash -c '
+      line=$(grep -E "^trusted_peers = " "$1") || exit 1
+      [[ $(grep -o "\"[^\"]*\"" <<<"$line" | wc -l) -eq 4 ]] || exit 1
+      for q in bi bank-a bank-b bank-c; do
+        k=$(jq -r --arg q "$q" ".[]|select(.party==\$q).public_key" "$2")
+        [[ -n $k ]] || exit 1
+        grep -Eq "\"${k}@addr:${q}-0\.${q}\.iroha3\.svc\.cluster\.local:1337#[0-9A-F]{4}\"" <<<"$line" || exit 1
+      done' _ "$t" "$PUB/peers.json"
   check "$p: genesis file /genesis/genesis.signed.nrt" \
     grep -Fxq 'file = "/genesis/genesis.signed.nrt"' "$t"
   check "$p: kura store_dir under /storage" grep -Eq '^store_dir = "/storage(/|")' "$t"
@@ -83,14 +92,39 @@ for p in "${PARTIES[@]}"; do
     bash -c '! grep -Eq "^\[+(torii\.faucet|torii\.account_onboarding)|private_key_file" "$1"' _ "$t"
   check "$p: chain matches public/chain_id" \
     bash -c '[[ $(grep -m1 "^chain = " "$1") == "chain = \"$(tr -d "\n" < "$2")\"" ]]' _ "$t" "$PUB/chain_id"
-  check "$p: peer public_key matches peers.json" \
-    bash -c 'grep -Fxq "public_key = \"$(jq -r --arg p "$3" ".[]|select(.party==\$p).public_key" "$2")\"" "$1"' _ "$t" "$PUB/peers.json" "$p"
+  # first `public_key =` line is the top-level key (precedes every table);
+  # later ones in [[trusted_peers_pop]] list all 4 parties and prove nothing.
+  check "$p: top-level public_key is this party's key in peers.json" \
+    bash -c '
+      want=$(jq -r --arg p "$3" ".[]|select(.party==\$p).public_key" "$2")
+      [[ -n $want ]] || exit 1
+      [[ $(grep -m1 "^public_key = " "$1") == "public_key = \"$want\"" ]]' _ "$t" "$PUB/peers.json" "$p"
   if [[ -f $c ]]; then
+    check "$p: client.toml has no sample [basic_auth]/mad_hatter" \
+      bash -c '! grep -Eq "^\[basic_auth\]|mad_hatter" "$1"' _ "$c"
     check "$p: client.toml mode 0600" test "$(stat -c %a "$c")" = 600
     check "$p: client torii_url" \
       grep -Fxq "torii_url = \"http://$dns:8080/\"" "$c"
   fi
 done
+
+# --- real-binary validation (verifies the #XXXX address checksums too) -------
+# Output is suppressed: configs contain private keys. Only exit status is used.
+IMAGE="${IMAGE:-ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark}"
+if [[ -d $OUT ]] && command -v docker >/dev/null; then
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+  for p in "${PARTIES[@]}"; do
+    [[ -f $OUT/$p/peer.toml ]] || continue
+    mkdir "$TMP/$p"
+    check "$p: iroha3d --check-config accepts peer.toml + signed genesis" \
+      docker run --rm --user "$(id -u):$(id -g)" \
+        -v "$PWD/$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PWD/$PUB:/genesis:ro" -v "$TMP/$p:/storage" \
+        --entrypoint iroha3d "$IMAGE" --check-config --config /config/peer.toml
+  done
+else
+  fail "docker or network/out missing: cannot run iroha3d --check-config"
+fi
 
 if (( fails )); then
   echo "FAILED: $fails check(s)" >&2
