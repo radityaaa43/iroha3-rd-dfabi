@@ -8,7 +8,9 @@ jalur privasi yang terdokumentasi di [docs.iroha.tech](https://docs.iroha.tech/g
 - Plan 1, setup jaringan: [`docs/superpowers/plans/2026-10-23-01-network-setup.md`](docs/superpowers/plans/2026-10-23-01-network-setup.md)
 - Plan 2, skenario use case: [`docs/superpowers/plans/2026-10-23-02-usecase-aps-scenarios.md`](docs/superpowers/plans/2026-10-23-02-usecase-aps-scenarios.md)
 
-Source Iroha: `hyperledger-iroha/iroha` @ `071e281e` (lihat `build/build-image.sh`).
+Source Iroha: `hyperledger-iroha/iroha` @ `071e281e`. Image node di-build di repo public terpisah
+[`radityaaa43/iroha3-rd-node-build`](https://github.com/radityaaa43/iroha3-rd-node-build)
+(repo ini private dan terhubung ke runner di cluster, jadi tidak boleh public).
 Target: namespace `iroha3` di cluster ACK, deploy lewat GitHub Actions dengan runner di dalam cluster.
 
 > **Kunci tidak pernah masuk Git.** Kunci privat validator, genesis, wallet, auditor, dan
