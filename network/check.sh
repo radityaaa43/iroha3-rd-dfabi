@@ -112,14 +112,13 @@ done
 # Output is suppressed: configs contain private keys. Only exit status is used.
 IMAGE="${IMAGE:-ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark}"
 if [[ -d $OUT ]] && command -v docker >/dev/null; then
-  TMP="$(mktemp -d)"
-  trap 'rm -rf "$TMP"' EXIT
+  # /storage on a fresh tmpfs: iroha3d reserves 20% of the storage filesystem as
+  # headroom (AUTO_STORAGE_HEADROOM_BPS), so a host disk over 80% full fails the check.
   for p in "${PARTIES[@]}"; do
     [[ -f $OUT/$p/peer.toml ]] || continue
-    mkdir "$TMP/$p"
     check "$p: iroha3d --check-config accepts peer.toml + signed genesis" \
       docker run --rm --user "$(id -u):$(id -g)" \
-        -v "$PWD/$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PWD/$PUB:/genesis:ro" -v "$TMP/$p:/storage" \
+        -v "$PWD/$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PWD/$PUB:/genesis:ro" --tmpfs /storage:rw,size=2g,mode=1777 \
         --entrypoint iroha3d "$IMAGE" --check-config --config /config/peer.toml
   done
 else
