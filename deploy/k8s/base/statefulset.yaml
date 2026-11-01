@@ -74,12 +74,21 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+          # subPath: Secret/ConfigMap keys are symlinks into ..data/, and iroha3d rejects a
+          # config source that is a symlink (iroha_config_base/src/toml.rs). subPath bind-mounts
+          # the regular file.
           volumeMounts:
             - name: config
-              mountPath: /config
+              mountPath: /config/peer.toml
+              subPath: peer.toml
               readOnly: true
             - name: genesis
-              mountPath: /genesis
+              mountPath: /genesis/genesis.signed.nrt
+              subPath: genesis.signed.nrt
+              readOnly: true
+            - name: genesis
+              mountPath: /genesis/genesis.expected_hash
+              subPath: genesis.expected_hash
               readOnly: true
             - name: data
               mountPath: /storage
