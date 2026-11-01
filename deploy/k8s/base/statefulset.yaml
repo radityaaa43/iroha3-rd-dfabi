@@ -31,6 +31,20 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      # fsGroup leaves the PVC root setgid and group-writable (2775); iroha3d then fails
+      # P2P startup with "SoraNet handshake negotiation failed" (reproduced locally; a
+      # 0700 owner-only /storage starts). Run iroha3d on an owner-only, non-setgid subdir.
+      initContainers:
+        - name: storage-dir
+          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          command: [sh, -c, 'mkdir -p /pvc/data && chmod 00700 /pvc/data'] # 00700 also clears setgid
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /pvc
       containers:
         - name: iroha3d
           image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
@@ -92,6 +106,7 @@ spec:
               readOnly: true
             - name: data
               mountPath: /storage
+              subPath: data
       volumes:
         - name: config
           secret:
