@@ -21,6 +21,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
+      priorityClassName: iroha3-peer # deploy/cluster/priorityclass.yaml
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001

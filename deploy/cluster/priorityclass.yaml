@@ -1,0 +1,11 @@
+# Cluster-scoped: applied by the operator (kubectl apply -f), not by the namespaced runner.
+# The shared cluster refills a stopped peer's node slot within minutes, and a peer's ESSD
+# disk pins it to one zone, so a restarted validator must be able to preempt priority-0 pods.
+# Same value as the existing paladin-high-priority class.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: iroha3-peer
+value: 10000
+globalDefault: false
+description: Iroha 3 RD/DFABI validators (namespace iroha3)
