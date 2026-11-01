@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: iroha3-rd-peers
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: iroha3-rd
+  policyTypes: [Ingress]
+  ingress:
+    # P2P only between validators
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: iroha3-rd
+      ports:
+        - port: 1337
+    # Torii from any pod in namespace iroha3
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8080

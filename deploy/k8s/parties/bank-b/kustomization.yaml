@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+labels:
+  - pairs:
+      iroha3-rd/party: bank-b
+    includeSelectors: true
+    includeTemplates: true
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: peer
+      spec:
+        serviceName: bank-b
+        template:
+          spec:
+            volumes:
+              - name: config
+                secret:
+                  secretName: peer-bank-b
+  - target:
+      name: peer
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: bank-b

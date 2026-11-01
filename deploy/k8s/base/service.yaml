@@ -1,0 +1,16 @@
+# Headless: gives the pod its stable DNS name <party>-0.<party>.iroha3.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: peer
+spec:
+  clusterIP: None
+  # Peers must resolve each other before any of them is Ready (consensus needs quorum).
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/part-of: iroha3-rd
+  ports:
+    - name: p2p
+      port: 1337
+    - name: api
+      port: 8080

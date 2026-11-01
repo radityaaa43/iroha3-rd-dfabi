@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+labels:
+  - pairs:
+      iroha3-rd/party: bi
+    includeSelectors: true
+    includeTemplates: true
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: peer
+      spec:
+        serviceName: bi
+        template:
+          spec:
+            volumes:
+              - name: config
+                secret:
+                  secretName: peer-bi
+  - target:
+      name: peer
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: bi

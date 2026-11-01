@@ -1,0 +1,102 @@
+# One Iroha 3 validator. Party overlays rename `peer` and point at their own Secret;
+# the root kustomization sets the genesis ConfigMap.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: peer
+spec:
+  serviceName: peer
+  replicas: 1
+  podManagementPolicy: Parallel
+  # Genesis/topology changes need a coordinated wipe of every peer PVC, never a rolling update.
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: iroha3-rd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: iroha3-rd
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        # iroha3d keeps 0700/0600 private dirs under /storage; a recursive chown/chmod on
+        # every mount would widen them.
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: iroha3d
+          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          # Bypass the image's Taira entrypoint; same invocation network/check.sh validates.
+          command: [iroha3d]
+          args: [--config, /config/peer.toml]
+          env:
+            - name: TELEMETRY_PROFILE
+              value: extended
+          ports:
+            - name: p2p
+              containerPort: 1337
+            - name: api
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: 1500m
+              memory: 3Gi
+          # /livez is process-only; /readyz includes consensus admission.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: api
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: api
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: genesis
+              mountPath: /genesis
+              readOnly: true
+            - name: data
+              mountPath: /storage
+      volumes:
+        - name: config
+          secret:
+            secretName: peer-PARTY
+            defaultMode: 0440 # root-owned, group 1001 (fsGroup) reads it
+        - name: genesis
+          configMap:
+            name: genesis-HASH
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: alicloud-essd-wffc
+        resources:
+          requests:
+            storage: 5Gi

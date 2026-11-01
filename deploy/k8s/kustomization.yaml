@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: iroha3
+resources:
+  - parties/bi
+  - parties/bank-a
+  - parties/bank-b
+  - parties/bank-c
+  - networkpolicy.yaml
+# Genesis hash8 = first 8 chars after `hash:` in network/public/genesis.expected_hash, lowercase.
+# Changing it requires scripts/wipe-network.sh first (deploy.yml refuses otherwise).
+labels:
+  - pairs:
+      iroha3-rd/genesis: "2986b430"
+    includeTemplates: true
+patches:
+  - target:
+      kind: StatefulSet
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: any
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: genesis
+                configMap:
+                  name: genesis-2986b430
