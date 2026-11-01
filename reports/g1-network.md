@@ -50,9 +50,12 @@ Sumeragi v2 height has no classified semantic progress height=21 view=1 leader=2
 ```
 
 `leader=2` is `bi`, the stopped peer. `view_change_suggest_total` and
-`view_change_install_total` stayed `0` on every peer through every stall. The view never
-advanced past the offline leader. Commits with 3 signers do work (`commit_qc_signatures_total=3`
-of `commit_qc_validator_set_len=4`), so the stall is in leader failover, not in quorum.
+`view_change_install_total` stayed `0` on every peer through every stall.
+
+**Correction (debug-log run, see Root cause):** views do change. The `/status` view-change
+counters stay `0` even while debug logs show `installed certified Sumeragi v2 view` for views
+1→6. The earlier reading "the view never advanced" was wrong; the stall is not in global
+leader failover.
 
 Ruled out:
 - Clock skew: pod clocks agree within ~10 ms (`max_clock_drift_ms=1000`).
@@ -90,8 +93,51 @@ Here they never did.
 - `bank-a-0` and `bank-b-0` still run the pre-PriorityClass revision (OnDelete) and pick it up
   on their next restart.
 
+## Root cause (debug-log run, 2026-11-01 16:38–16:58 UTC)
+
+Method: `[logger] filter = "iroha_core::sumeragi=debug"` in the cluster `peer-<party>` Secrets
+(env `LOG_FILTER` is ignored: `irohad` uses `ConfigReader::new().without_env()` whenever
+`--config` is given, `crates/irohad/src/main.rs:11633`), bi stopped, 6 ping txs from bank-a.
+
+Observed:
+- None of the 6 txs committed in 20 min (`queue_size` 0→5 on all three banks), although the
+  global chain kept producing blocks 33→36.
+- Each global height took exactly ~240 s: views 1–6 are installed at +10, +30, +61, +101, +151,
+  +211 s (timeouts 10/20/30/40/50/60 s, `v2_runtime.rs:108-118`). In view 6 the leader assembles
+  a candidate with `work_deferred: 1, selected: 0` ~26 s in, and that block commits. The user tx
+  stays deferred.
+- From the second bi stops, every live peer logs ~300/s `retained exact Sumeragi v2 output behind
+  network-actor backpressure` (outputs to bi, `v2_worker_services_impl.rs:4166-4171`). These are
+  per-target and released at commit, so they are a symptom, not the cause.
+
+Code chain (071e281e):
+1. Torii accepts only `QueuePlanSynced` transactions: "public transaction submission requires a
+   signature-bound QueuePlanSynced admission intent" (`crates/iroha_torii/src/lib.rs:25160-25165`).
+2. The global leader never selects a `QueuePlanSynced` transaction. It counts it as
+   `work_deferred` and leaves it to "cross the autonomous lane and merge corridor … while the lane
+   author takes ownership" (`crates/iroha_core/src/sumeragi/v2_candidate.rs:833-842`).
+3. Each autonomous lane block has exactly one author:
+   `validator_set[(lane_block_height - 1) % n]`, "independent of the global carrier view"
+   (`crates/iroha_core/src/lane_consensus.rs:90-107`). A payload from anyone else is rejected with
+   `ProducerNotDeterministicAuthor` (`lane_consensus.rs:854-860`). Lane NewView certificates only
+   advance a retransmission cursor; they do not change the author (`lane_consensus.rs` struct doc
+   for `LaneExecutablePayloadV1`).
+4. Spec: every lane committee is exactly `3f+1`, and its pool "must contain at least `3f+1`
+   distinct live peers … undersized pools fail closed" (`specs/nexus.md:216`).
+
+Conclusion: with 4 validators (`3f+1`, f=1), once the lane height reaches the offline
+validator's turn, no valid lane payload can be produced and **no user transaction commits**
+until that validator returns. The global chain keeps sealing transaction-less blocks every
+~240 s. Which lane height the outage hits decides whether a few txs still pass first
+(bank-c 16:09: one tx in ~16 s) or the stall is immediate.
+
+So with this build, R2 (network keeps settling while BI is offline) is **not achievable with a
+4-validator network where BI is one of the validators**. No peer config or on-chain parameter
+changes the lane-author rule; `block_cadence_ms` only scales the global timeouts.
+
 ## Open
 
-G1 is not met. Plan 02 must not start until a 3-of-4 network keeps committing with any one
-peer down. Next diagnostic: raise `logger.level` for `iroha_core::sumeragi` on the live peers,
-repeat one stall, and check whether TimeoutVotes are produced, sent, received, and rejected.
+G1 is not met, and the cause is an upstream design property of the autonomous lane at
+071e281e, not a deployment error. Plan 02 must not start on this topology. Any alternative
+(e.g. more validators so that `3f+1` live peers remain without BI) needs a localnet gate first;
+there is no official example of it.
