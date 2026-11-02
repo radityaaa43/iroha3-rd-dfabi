@@ -11,7 +11,7 @@ resources:
 # Changing it requires scripts/wipe-network.sh first (deploy.yml refuses otherwise).
 labels:
   - pairs:
-      iroha3-rd/genesis: "2986b430"
+      iroha3-rd/genesis: "9a4a1989"
     includeTemplates: true
 patches:
   - target:
@@ -27,4 +27,4 @@ patches:
             volumes:
               - name: genesis
                 configMap:
-                  name: genesis-2986b430
+                  name: genesis-9a4a1989
