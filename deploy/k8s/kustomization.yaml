@@ -11,7 +11,7 @@ resources:
 # Changing it requires scripts/wipe-network.sh first (deploy.yml refuses otherwise).
 labels:
   - pairs:
-      iroha3-rd/genesis: "ea8b5dff"
+      iroha3-rd/genesis: "a3d75eea"
     includeTemplates: true
 # The genesis ConfigMap name (base: genesis-HASH) is derived from the label above, so a new
 # genesis is ONE edit. deploy/secrets.sh refuses to run if this label != the genesis hash8.
