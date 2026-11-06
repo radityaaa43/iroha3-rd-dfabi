@@ -22,13 +22,18 @@ use iroha_core::{
     },
     private_settlement::{private_settlement_audit_plaintext_commitment_v1, seal_private_settlement_audit_capsule_v1},
 };
-use iroha_crypto::{Algorithm, Hash, HashOf, HybridKeyPair, KeyPair, PublicKey};
+use iroha_crypto::{Algorithm, Hash, HashOf, HybridKeyPair, KeyPair, PublicKey, SignatureOf};
 use iroha_data_model::{
     NetworkId,
     account::AccountId,
+    asset::AssetDefinitionId,
     nexus::{
         ATOMIC_PRIVATE_SETTLEMENT_VERSION_V1, AtomicPrivateSettlementV1, PrivateSettlementAuditAadV1,
-        PrivateSettlementAuditPolicyBodyV1, PrivateSettlementAuditPolicyV1, PrivateSettlementAuditorV1,
+        PrivateSettlementAuditEncryptionOpeningV1, PrivateSettlementAuditNoteOpeningV1, PrivateSettlementAuditOutputRoleV1,
+        PrivateSettlementAuditOutputV1, PrivateSettlementAuditPayerAuthorizationBodyV1, PrivateSettlementAuditPayerAuthorizationV1,
+        PrivateSettlementAuditPayerSignatureV1, PrivateSettlementAuditPlaintextV1, PrivateSettlementAuditPolicyBodyV1,
+        PrivateSettlementAuditPolicyV1, PrivateSettlementAuditViewKeyAuthorizationBodyV1,
+        PrivateSettlementAuditViewKeyAuthorizationV1, PrivateSettlementAuditViewKeySignatureV1, PrivateSettlementAuditorV1,
         PrivateSettlementCapsulePaddingV1, PrivateSettlementCommitteeAuthorityV1, PrivateSettlementDeltaV1,
         PrivateSettlementHybridPublicKeyV1, PrivateSettlementLegCommitmentV1, PrivateSettlementProofProfileV1,
         PrivateSettlementProofStatementV1, PrivateSettlementProvisionalLegMaterialV1, PrivateSettlementRouteV1,
@@ -42,6 +47,7 @@ use iroha_data_model::{
     transaction::FeePaymentIntent,
 };
 use iroha_model_base::{
+    domain::DomainId,
     peer::PeerId,
     topology::{DataSpaceId, LaneId},
 };
@@ -129,12 +135,150 @@ fn auditor_of(plan: &Plan) -> Result<PrivateSettlementAuditorV1, ErrorBody> {
     })
 }
 
+/// Synthetic `PrivateSettlementAuditPlaintextV1` for leg 0, canonically Norito-encoded, bound to `manifest`.
+///
+/// Why a typed plaintext: `private_settlement_audit_plaintext_commitment_v1` (iroha_core audit.rs:86-91) forwards to
+/// iroha_data_model nexus/private_settlement.rs:188-201, which runs `norito::decode_canonical::<PrivateSettlementAuditPlaintextV1>`
+/// and then `.validate()`; any failure (arbitrary bytes, non-canonical bytes, an invalid shape) is reported as
+/// `CanonicalEncoding`, despite the doc comment at audit.rs:84. The seal re-runs the same commitment check (audit.rs:136).
+///
+/// Built in the upstream order (sidecar_store.rs:4268-4390): plaintext first, then the manifest commitments that
+/// are derived from it (asset binding :4314, reimbursement terms :4316, bundle id :4318), then `plaintext.bundle_id`
+/// (:4319), then the view-key (:4365) and payer (:4390) authorizations, whose bodies embed the final bundle id.
+/// `validate()` checks authorization shape, not signatures (nexus/private_settlement.rs:779, :923, :1129), so the sponsor
+/// output is signed by a throwaway stand-in key: this crate never holds the sponsor's private key.
+/// The note openings are synthetic and not tied to the statement's encrypted outputs; nothing opens the capsule here.
+fn probe_audit_plaintext(salt: &[u8; 32], manifest: &mut AtomicPrivateSettlementV1, nullifiers: &[PrivacyNullifierV1]) -> Result<Vec<u8>, ErrorBody> {
+    const AMOUNT: u128 = 42;
+    const REIMBURSEMENT: u128 = 5;
+    let d = |label: &str| derived(salt, label);
+    let h = |label: &str| Hash::new(d(label));
+    let key = |label: &str| KeyPair::from_seed(d(label).to_vec(), Algorithm::Ed25519);
+    let (payer, recipient, sponsor_stand_in) = (key("payer"), key("recipient"), key("sponsor-stand-in"));
+    let (network_id, bundle_id, route) = (manifest.network_id, manifest.bundle_id, manifest.legs[0].route);
+
+    // Placeholders so the struct exists; the real bodies embed the final bundle id and fixed slots, so they replace these below.
+    let view_key_placeholder = |signer: &KeyPair| {
+        PrivateSettlementAuditViewKeyAuthorizationV1::new(
+            PrivateSettlementAuditViewKeyAuthorizationBodyV1 {
+                version: ATOMIC_PRIVATE_SETTLEMENT_VERSION_V1,
+                purpose: h("placeholder"),
+                network_id,
+                bundle_id,
+                leg_ordinal: 0,
+                route,
+                output_ordinal: 0,
+                role: PrivateSettlementAuditOutputRoleV1::SettlementRecipient,
+                authorized_account: AccountId::new(signer.public_key().clone()),
+                recipient_view_key: [0; 32],
+                output_active: false,
+                note_spending_authority: [0; 32],
+                expiry_height: 0,
+            },
+            Vec::new(),
+        )
+    };
+    // dummy slot when value == 0 (nexus/private_settlement.rs:1264 NoteOpening::validate)
+    let opening = |label: &str, value: u128, commitment: [u8; 32]| -> Result<PrivateSettlementAuditNoteOpeningV1, ErrorBody> {
+        let active = value != 0;
+        Ok(PrivateSettlementAuditNoteOpeningV1 {
+            active,
+            commitment: PrivacyCommitmentV1::new(commitment),
+            value,
+            spending_authority: derive_note_authority_v1(&d(&format!("{label}-spend"))).map_err(dbg("note authority"))?,
+            rho: d(&format!("{label}-rho")),
+            blinding: d(&format!("{label}-blinding")),
+            memo_digest: d(&format!("{label}-memo")),
+            dummy_domain: (!active).then(|| h(&format!("{label}-dummy"))),
+        })
+    };
+
+    // Fixed 2-in/3-out shape and balance (private_settlement.rs:1807-1900): inputs 47 + 0, outputs 42 + 0 + 5.
+    let signers = [&recipient, &payer, &sponsor_stand_in];
+    let roles = [
+        PrivateSettlementAuditOutputRoleV1::SettlementRecipient,
+        PrivateSettlementAuditOutputRoleV1::PayerChange,
+        PrivateSettlementAuditOutputRoleV1::SponsorReimbursement,
+    ];
+    let mut outputs = Vec::with_capacity(roles.len());
+    for (i, (role, value)) in roles.into_iter().zip([AMOUNT, 0, REIMBURSEMENT]).enumerate() {
+        outputs.push(PrivateSettlementAuditOutputV1 {
+            role,
+            recipient_view_key: ivm_private_recipient_public_key_v1(&d(&format!("view-secret{i}"))).map_err(dbg("output view key"))?,
+            view_key_authorization: view_key_placeholder(signers[i]),
+            encryption_opening: PrivateSettlementAuditEncryptionOpeningV1 { ephemeral_secret: d(&format!("ephemeral-secret{i}")) },
+            note: opening(&format!("out{i}"), value, d(&format!("commitment{i}")))?,
+        });
+    }
+    let asset_definition_id = AssetDefinitionId::derive_from_components(
+        DomainId::try_new("bank-a", "regulated").map_err(dbg("probe domain"))?,
+        "cbdc".parse().map_err(dbg("probe asset name"))?,
+    );
+    let mut plaintext = PrivateSettlementAuditPlaintextV1 {
+        version: ATOMIC_PRIVATE_SETTLEMENT_VERSION_V1,
+        network_id,
+        bundle_id,
+        leg_ordinal: 0,
+        route,
+        pool_id: manifest.legs[0].pool_id,
+        payer: AccountId::new(payer.public_key().clone()),
+        payer_authorization: PrivateSettlementAuditPayerAuthorizationV1::new(
+            PrivateSettlementAuditPayerAuthorizationBodyV1 {
+                version: ATOMIC_PRIVATE_SETTLEMENT_VERSION_V1,
+                purpose: h("placeholder"),
+                network_id,
+                bundle_id,
+                leg_ordinal: 0,
+                route,
+                payer: AccountId::new(payer.public_key().clone()),
+                expiry_height: 0,
+                inputs: Vec::new(),
+            },
+            Vec::new(),
+        ),
+        recipient: AccountId::new(recipient.public_key().clone()),
+        sponsor: manifest.sponsor.clone(),
+        asset_definition_id,
+        asset_binding_salt: d("asset-binding-salt"),
+        amount: AMOUNT,
+        sponsor_reimbursement_amount: REIMBURSEMENT,
+        fee_intent_digest: manifest.fee_intent_digest,
+        settlement_expiry_height: manifest.expiry_height,
+        reimbursement_terms_salt: d("reimbursement-terms-salt"),
+        memo: b"rd-dfabi availability-share probe".to_vec(),
+        policy_references: Vec::new(),
+        inputs: vec![opening("in0", AMOUNT + REIMBURSEMENT, d("in0-commitment"))?, opening("in1", 0, d("in1-commitment"))?],
+        outputs,
+    };
+
+    // Manifest commitments derived from the plaintext, then the bundle id they feed (not payload/delta digests: bundle_id_material excludes them).
+    manifest.legs[0].asset_binding_commitment = plaintext.asset_binding_commitment().map_err(dbg("asset binding commitment"))?;
+    manifest.reimbursement_terms_commitment = plaintext.reimbursement_terms_commitment().map_err(dbg("reimbursement terms commitment"))?;
+    manifest.bundle_id = manifest.computed_bundle_id().map_err(dbg("bundle id"))?;
+    plaintext.bundle_id = manifest.bundle_id;
+
+    for (i, signer) in signers.into_iter().enumerate() {
+        let body = plaintext.output_view_key_authorization_body(i).map_err(dbg("view key authorization body"))?;
+        let signature = SignatureOf::try_new(signer.private_key(), &body).map_err(dbg("view key authorization signature"))?;
+        plaintext.outputs[i].view_key_authorization =
+            PrivateSettlementAuditViewKeyAuthorizationV1::new(body, vec![PrivateSettlementAuditViewKeySignatureV1::new(signer.public_key().clone(), signature)]);
+    }
+    let body = plaintext.payer_authorization_body(nullifiers).map_err(dbg("payer authorization body"))?;
+    let signature = SignatureOf::try_new(payer.private_key(), &body).map_err(dbg("payer authorization signature"))?;
+    plaintext.payer_authorization =
+        PrivateSettlementAuditPayerAuthorizationV1::new(body, vec![PrivateSettlementAuditPayerSignatureV1::new(payer.public_key().clone(), signature)]);
+
+    plaintext.validate().map_err(dbg("audit plaintext"))?;
+    norito::encode_canonical(&plaintext).map_err(dbg("audit plaintext encoding"))
+}
+
 /// Build the PrivateSettlementProvisionalLegMaterialV1 for leg 0 (dataspace `plan.tested`) and return its Norito JSON.
 ///
 /// Mirrors the upstream fixture `provisional_material_fixture` (iroha_core/src/private_settlement/sidecar_store.rs:4102,
-/// `sidecar_fixture_with_threshold_and_ordinal` :4129) with three differences: the audit plaintext is a fixed probe string
-/// (the validator never opens the capsule, it only checks the plaintext commitment), the proof is a 128-byte placeholder
-/// (the STARK is verified at prepare, not here), and the committee is the live roster, not a seeded one.
+/// `sidecar_fixture_with_threshold_and_ordinal` :4129) with three differences: the audit plaintext is synthetic (the
+/// validator never opens the capsule; the plaintext must still be a canonical, valid `PrivateSettlementAuditPlaintextV1`,
+/// see `probe_audit_plaintext`), the proof is a 128-byte placeholder (the STARK is verified at prepare, not here), and the
+/// committee is the live roster, not a seeded one.
 pub fn availability_share_material(plan: &Plan) -> Result<String, ErrorBody> {
     // AccountId JSON and Display use the process-wide discriminant (iroha_data_model/src/account/address.rs:42).
     if let Some(d) = plan.chain_discriminant {
@@ -219,10 +363,11 @@ pub fn availability_share_material(plan: &Plan) -> Result<String, ErrorBody> {
         legs: vec![leg(0, route0, "0", policy.policy_digest), leg(1, route1, "1", h("policy-digest1"))],
     };
     manifest.fee_intent_digest = manifest.computed_fee_intent_digest().map_err(dbg("fee intent digest"))?;
-    manifest.bundle_id = manifest.computed_bundle_id().map_err(dbg("bundle id"))?;
 
-    // Capsule: the plaintext is a probe marker, sealed to the auditor with the real hybrid KEM + XChaCha20-Poly1305.
-    let plaintext = format!("rd-dfabi availability-share probe {}", hex::encode(&d("plaintext")[..8])).into_bytes();
+    // Capsule: the plaintext is a synthetic but canonical audit plaintext; it also fixes the leg-0 asset binding, the
+    // reimbursement terms and the bundle id on the manifest. Sealed to the auditor with the real hybrid KEM + XChaCha20-Poly1305.
+    let nullifiers = vec![PrivacyNullifierV1::new(d("nullifier0")), PrivacyNullifierV1::new(d("nullifier1"))];
+    let plaintext = probe_audit_plaintext(&plan.salt, &mut manifest, &nullifiers)?;
     let plaintext_commitment = private_settlement_audit_plaintext_commitment_v1(&plaintext).map_err(dbg("plaintext commitment"))?;
     let capsule = seal_private_settlement_audit_capsule_v1(
         &plaintext,
@@ -237,7 +382,11 @@ pub fn availability_share_material(plan: &Plan) -> Result<String, ErrorBody> {
             audit_key_epoch: policy.body.key_epoch,
             plaintext_commitment,
         },
-        PrivateSettlementCapsulePaddingV1::KiB4,
+        // KiB16 as in sidecar_store.rs:4468 and wallet.rs:1521; the seal limit is the class minus the 8-byte frame header
+        // (audit.rs:34, :269-272). The canonical plaintext (5 note openings, 4 signed authorizations) was not measured against
+        // the 4096-byte class and upstream never seals one at KiB4 here; the 16384 class is in the shipped
+        // capsule_padding_classes_bytes (iroha_config defaults.rs:3269) and in the handler's check (iroha_torii private_settlement.rs:1078).
+        PrivateSettlementCapsulePaddingV1::KiB16,
         &policy,
     )
     .map_err(dbg("seal audit capsule"))?;
@@ -272,7 +421,7 @@ pub fn availability_share_material(plan: &Plan) -> Result<String, ErrorBody> {
         new_root: PrivacyRootV1::new(d("root-new")),
         old_epoch: 1,
         new_epoch: 2,
-        nullifiers: vec![PrivacyNullifierV1::new(d("nullifier0")), PrivacyNullifierV1::new(d("nullifier1"))],
+        nullifiers: nullifiers.clone(),
         output_commitments: encrypted_outputs.iter().map(|o| o.commitment).collect(),
         encrypted_outputs: encrypted_outputs.clone(),
         audit_plaintext_commitment: plaintext_commitment,
@@ -341,7 +490,7 @@ pub fn availability_share_material(plan: &Plan) -> Result<String, ErrorBody> {
     manifest.legs[0].delta_digest = delta_digest;
     manifest.validate_provisional().map_err(dbg("provisional manifest"))?;
     material.manifest = manifest;
-    // The same check the handler runs last (iroha_torii/src/private_settlement.rs:1085), here before anything is sent.
+    // The same check the handler runs last (iroha_torii/src/private_settlement.rs:1084), here before anything is sent.
     material.validate().map_err(dbg("material validation"))?;
 
     // What the CLI will read (iroha_cli/src/nexus.rs:306 parses with norito::json) must give back the same value.
@@ -352,4 +501,116 @@ pub fn availability_share_material(plan: &Plan) -> Result<String, ErrorBody> {
         return Err(err("internal", "material does not survive a JSON round trip", false));
     }
     Ok(json)
+}
+
+/// Run by CI after the release build: `cargo test --release --locked -p rd-dfabi --features aps`.
+/// Every key, hash and id below is generated from a fixed label inside this module; none exists outside the test run.
+#[cfg(test)]
+mod tests {
+    use iroha_core::private_settlement::{PrivateSettlementAuditCryptoErrorV1, open_private_settlement_audit_capsule_v1};
+    use iroha_data_model::block::BlockHeader;
+
+    use super::*;
+    use crate::probe::{AuditorPublic, RosterEntry, parse_lifecycle, sorted_roster};
+
+    fn keypair(label: &str, algorithm: Algorithm) -> KeyPair {
+        KeyPair::from_seed(derived(&[0x5E; 32], label).to_vec(), algorithm)
+    }
+
+    fn known_auditor() -> (AuditorPublic, HybridKeyPair) {
+        let mut rng = iroha_crypto::rng_from_seed_slice(b"rd-dfabi synthetic test auditor");
+        let hybrid = HybridKeyPair::generate(&mut rng).expect("hybrid key");
+        let public = AuditorPublic {
+            signing_public_key: keypair("auditor", Algorithm::Ed25519).public_key().to_string(),
+            x25519: hybrid.public().x25519_bytes(),
+            ml_kem_768: hybrid.public().kyber_bytes().to_vec(),
+        };
+        (public, hybrid)
+    }
+
+    /// Four BLS committee keys with real PoPs, a lifecycle for dataspaces 1 and 2, a synthetic network id and sponsor.
+    fn synthetic_plan(auditor: Option<AuditorPublic>) -> Plan {
+        let roster: Vec<RosterEntry> = (0..4)
+            .map(|i| {
+                let key = keypair(&format!("committee{i}"), Algorithm::BlsNormal);
+                RosterEntry {
+                    public_key: key.public_key().to_string(),
+                    pop: iroha_crypto::bls_normal_pop_prove(key.private_key()).expect("PoP"),
+                }
+            })
+            .collect();
+        // Hash::from_str wants the least significant bit set, which Hash::new guarantees.
+        let incarnation = |label: &str| {
+            let hash = Hash::new(label.as_bytes());
+            let bytes: &[u8] = hash.as_ref();
+            hex::encode_upper(bytes)
+        };
+        let lifecycle = serde_json::json!({
+            "lanes": [{"id": 1, "dataspace_id": 1}, {"id": 2, "dataspace_id": 2}],
+            "incarnations": [
+                {"lane_id": 1, "incarnation": incarnation("synthetic lane 1")},
+                {"lane_id": 2, "incarnation": incarnation("synthetic lane 2")}
+            ]
+        })
+        .to_string();
+        Plan {
+            network_id: NetworkId::from_genesis_hash(HashOf::<BlockHeader>::from_untyped_unchecked(Hash::new(b"synthetic genesis"))).to_string(),
+            sponsor_public_key: keypair("sponsor", Algorithm::Ed25519).public_key().to_string(),
+            context_height: 34,
+            expiry_blocks: 7000,
+            retention_blocks: 1_100_000,
+            roster: sorted_roster(roster).expect("roster"),
+            tested: parse_lifecycle(&lifecycle, 1).expect("lane 1"),
+            other: parse_lifecycle(&lifecycle, 2).expect("lane 2"),
+            auditor,
+            chain_discriminant: None,
+            salt: [7; 32],
+        }
+    }
+
+    /// Builds through the real entry point (which runs material.validate() and the JSON round trip) and parses the output again.
+    fn material_of(plan: &Plan) -> PrivateSettlementProvisionalLegMaterialV1 {
+        let json = availability_share_material(plan).expect("material builds");
+        crate::probe::check_material_shape(&json).expect("nine fields");
+        norito::json::from_str(&json).expect("material parses")
+    }
+
+    #[test]
+    fn material_with_a_throwaway_auditor_validates_and_round_trips() {
+        let material = material_of(&synthetic_plan(None));
+        material.validate().expect("material validates");
+        material.manifest.validate_provisional().expect("provisional manifest");
+        assert_eq!(material.audit_capsule.padding.plaintext_bytes(), PrivateSettlementCapsulePaddingV1::KiB16.plaintext_bytes());
+        assert_eq!(material.audit_capsule.aad.plaintext_commitment, material.statement.audit_plaintext_commitment);
+        assert_eq!(material.manifest.legs[0].audit_policy_digest, material.audit_policy.policy_digest);
+        assert_eq!(material.committee_authority.validators.len(), 4);
+    }
+
+    #[test]
+    fn capsule_opens_to_the_canonical_plaintext_bound_to_the_manifest() {
+        let (auditor, hybrid) = known_auditor();
+        let material = material_of(&synthetic_plan(Some(auditor)));
+        let auditor_id = material.audit_policy.body.auditors[0].auditor_id.clone();
+        let opened = open_private_settlement_audit_capsule_v1(&material.audit_capsule, &material.audit_policy, &auditor_id, hybrid.secret())
+            .expect("the governed auditor opens the capsule");
+        // The commitment function decodes a typed plaintext (nexus/private_settlement.rs:188-201); the statement carries its result.
+        assert_eq!(private_settlement_audit_plaintext_commitment_v1(&opened).expect("commitment"), material.statement.audit_plaintext_commitment);
+        let plaintext: PrivateSettlementAuditPlaintextV1 = norito::decode_canonical(&opened).expect("canonical plaintext");
+        assert_eq!(norito::encode_canonical(&plaintext).expect("re-encode").as_slice(), opened.as_slice());
+        assert_eq!(plaintext.commitment().expect("commitment"), material.statement.audit_plaintext_commitment);
+        // validate_against_manifest wants final certificate digests (settlement_validation.rs:165); bundle id and commitments ignore them.
+        let mut manifest = material.manifest.clone();
+        for leg in &mut manifest.legs {
+            leg.availability_certificate_digest = Hash::new(b"certificate stand-in");
+        }
+        plaintext.validate_against_manifest(&manifest).expect("plaintext matches the manifest leg");
+        assert_eq!(plaintext.bundle_id, material.manifest.bundle_id);
+    }
+
+    /// The bug that produced `plaintext commitment: CanonicalEncoding`: a text marker is not a canonical audit plaintext.
+    #[test]
+    fn commitment_rejects_bytes_that_are_not_a_canonical_audit_plaintext() {
+        let result = private_settlement_audit_plaintext_commitment_v1(b"rd-dfabi availability-share probe 0011223344556677");
+        assert!(matches!(result, Err(PrivateSettlementAuditCryptoErrorV1::CanonicalEncoding)));
+    }
 }
