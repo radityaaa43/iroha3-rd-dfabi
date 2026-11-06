@@ -141,3 +141,40 @@ G1 is not met, and the cause is an upstream design property of the autonomous la
 071e281e, not a deployment error. Plan 02 must not start on this topology. Any alternative
 (e.g. more validators so that `3f+1` live peers remain without BI) needs a localnet gate first;
 there is no official example of it.
+
+## R2 verdict (2026-11-06): EXEMPT
+
+R2 ("system keeps working while BI is offline") stays **exempt** for the Iroha 3 APS track, as
+in the team charter (`agents/TEAM.md`: "Iroha 3 (APS): BI is an online auditor, exempt from R2.").
+Decision: option F below. Research only, no live experiment; source `071e281e`.
+
+Root cause: the lane block author is fixed and has no failover.
+- Author = `validators[(h-1) % n]`, no mode, view or liveness input: `crates/iroha_core/src/lane_consensus.rs:96-107`,
+  enforced at `:854-860`. Autonomous payloads must be view 0 (`:984`, `:1048`), so a lane view change cannot move authorship.
+- Lane pool = registered set, not live set; committee is exactly `3f+1`, so dropping BI from a 4-pool fails closed
+  (`crates/iroha_core/src/state/lane_authority.rs:461-650`).
+- `QueuePlanSynced` cannot be disabled: `ToriiProxyTransactionAdmissionV1` has a single variant
+  (`crates/iroha_core/src/torii_proxy.rs:1345-1352`); Torii answers 409 otherwise (`crates/iroha_torii/src/lib.rs:25160-25165`).
+- Removing BI via `SlashPublicLaneValidator` needs a tx through the stalled lane: circular.
+
+Options:
+
+| Option | R2 | Cost |
+|---|---|---|
+| A. BI out of lane pools, 4 non-BI validators (A, B, C + new node-d) | unverified; predicted BI-down only (any other validator down still stalls) | genesis change + wipe, 5th peer (cluster slots tight), no image rebuild, ~1-2 days; APS legs still stall while BI (sole auditor) is offline unless a second auditor + `min_approvals` is added |
+| B. Pool >=5 + beacon-seeded committee | refuted as fix | probabilistic, beacon setup |
+| C. Governance removal of BI | refuted as runtime failover | circular; planned swap only |
+| D. Disable `QueuePlanSynced` | refuted | not configurable |
+| E. More validators / higher f / knobs | refuted | worse or no effect |
+| F. Keep R2 exempt | exempt (chosen) | zero |
+| G. Upstream rewrite | unverified | 4-8 days, target build not known to compile |
+
+Option A is deferred; do it only if a BI-down demo is requested.
+
+Upstream: no issue or PR names the stall. The fix is a rewrite, not a patch: `d7dfb1ea` (2026-09-29) deleted
+`lane_consensus.rs` and `lane_planner.rs` on the `optimizations` branch (`QueuePlanSynced` gone; per-lane Sumeragi
+cores with timeout-certificate view change). PR #5653 (2026-11-03, closed unmerged): "The optimizations branch does
+not compile". HEAD builds with Rust 1.99.1 (ours 1.93.1), APS config knobs are retired, and genesis is incompatible
+(wipe + redo Task 8).
+
+Track 2 probe (CI-only `cargo build` of candidate pins `929a6068`, `e3bbd985`): pending.
