@@ -53,6 +53,13 @@ jobs:
           restore-keys: driver-${{ env.TOOLCHAIN }}-
       - name: Contract tests (no iroha, seconds)
         run: cargo test --locked -p rd-dfabi
+      # decode-tx for the OPA gateway: iroha_data_model + norito only (no iroha_core), far lighter than the aps build.
+      # Built first because the aps build overwrites target/release/rd-dfabi.
+      - name: Decoder tests and build (feature decode)
+        run: |
+          cargo test --locked -p rd-dfabi --features decode
+          cargo build --release --locked -p rd-dfabi --features decode
+          mkdir -p decode-out && cp target/release/rd-dfabi decode-out/rd-dfabi-decode
       - name: Build with APS
         run: |
           ( while sleep 120; do echo "::group::resources $(date -u +%H:%M)"; free -m | sed -n 2,3p; df -h / | tail -1; echo "::endgroup::"; done ) &
@@ -66,5 +73,11 @@ jobs:
         with:
           name: rd-dfabi
           path: driver/target/release/rd-dfabi
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rd-dfabi-decode
+          path: driver/decode-out/rd-dfabi-decode
           if-no-files-found: error
           retention-days: 30

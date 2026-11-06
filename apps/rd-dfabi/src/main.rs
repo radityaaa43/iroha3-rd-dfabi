@@ -11,6 +11,10 @@ mod store;
 mod tree;
 #[cfg(feature = "aps")]
 mod aps;
+#[cfg(feature = "decode")]
+mod decode;
+mod txserve;
+mod txview;
 
 // The crypto behind `Backend`: upstream calls in the aps build, "needs --features aps" errors in the light one.
 #[cfg(feature = "aps")]
@@ -18,7 +22,7 @@ use aps::ApsBackend as Be;
 #[cfg(not(feature = "aps"))]
 use backend::NoAps as Be;
 
-use std::{io::Read, path::PathBuf, process::ExitCode};
+use std::{io::Read, net::TcpListener, path::PathBuf, process::ExitCode};
 
 use anyhow::{Context, Result};
 use api::*;
@@ -69,10 +73,30 @@ enum Cmd {
     /// Offline builders for one-shot live probes (no network, no key store).
     #[command(subcommand)]
     Probe(ProbeCmd),
+    /// Decode one Iroha 3 tx request body (stdin or --input; raw bytes) into the policy JSON the OPA gateway reads.
+    /// Errors: JSON on stdout, exit 3. Needs --features decode.
+    DecodeTx(DecodeTxArgs),
     /// Print the JSON schemas of every command (optionally write them to DIR).
     Schema {
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+}
+#[derive(clap::Args)]
+struct DecodeTxArgs {
+    /// Content-Type the client sent: application/x-norito or application/json. Required unless `serve`.
+    #[arg(long)]
+    content_type: Option<String>,
+    #[command(subcommand)]
+    serve: Option<DecodeServe>,
+}
+#[derive(Subcommand)]
+enum DecodeServe {
+    /// HTTP sidecar: POST /decode with the raw body and its Content-Type header -> JSON. Runs until killed.
+    Serve {
+        /// host:port to bind (no default; the gateway pod binds loopback).
+        #[arg(long)]
+        listen: String,
     },
 }
 #[derive(Subcommand)]
@@ -102,6 +126,40 @@ enum AuditorCmd {
     Approve,
     /// Long-lived: NDJSON events on stdout, never plaintext.
     Run,
+}
+
+/// The body decoder: the real one with `--features decode`, a stub error otherwise.
+#[cfg(feature = "decode")]
+use decode::decode as decode_body;
+#[cfg(not(feature = "decode"))]
+fn decode_body(_: &[u8], _: txview::Format) -> Result<txview::TxView, txview::DecodeErr> {
+    Err(txview::DecodeErr::new("needs_decode_feature", "rd-dfabi was built without --features decode"))
+}
+
+fn decode_tx(cli: &Cli, args: &DecodeTxArgs) -> (String, u8) {
+    use txview::{DecodeErr, content_format, render};
+    if let Some(DecodeServe::Serve { listen }) = &args.serve {
+        let l = match TcpListener::bind(listen) {
+            Ok(l) => l,
+            Err(e) => return render(Err(DecodeErr::new("io", format!("bind {listen}: {e}")))),
+        };
+        return match txserve::serve(l, decode_body) {
+            Ok(()) => (String::new(), 0),
+            Err(e) => render(Err(DecodeErr::new("io", e.to_string()))),
+        };
+    }
+    let mut body = Vec::new();
+    let read = match &cli.input {
+        Some(p) => std::fs::read(p).map(|b| body = b),
+        None => std::io::stdin().take(txserve::MAX_BODY as u64 + 1).read_to_end(&mut body).map(|_| ()),
+    };
+    if let Err(e) = read {
+        return render(Err(DecodeErr::new("io", format!("read body: {e}"))));
+    }
+    if body.len() > txserve::MAX_BODY {
+        return render(Err(DecodeErr::new("too_large", "body exceeds 1 MiB")));
+    }
+    render(content_format(args.content_type.as_deref()).and_then(|f| decode_body(&body, f)))
 }
 
 fn read_input<T: DeserializeOwned>(path: &Option<PathBuf>) -> Result<T> {
@@ -162,6 +220,8 @@ fn schemas() -> Vec<(&'static str, serde_json::Value, serde_json::Value)> {
         s::<BalancesReq, BalancesResp>("balances"),
         s::<AuditorApproveReq, AuditorApproveResp>("auditor-approve"),
         s::<DoctorReq, DoctorResp>("doctor"),
+        // decode-tx is not an Envelope: the response is txview::DecodeOut; the request is the Content-Type the body arrived with.
+        ("decode-tx", serde_json::to_value(schema_for!(txview::DecodeTxReq)).unwrap(), serde_json::to_value(schema_for!(txview::DecodeOut)).unwrap()),
         // Progress is not a response; it is the stderr line format of dvp / pool activate / auditor run.
         ("progress", serde_json::to_value(schema_for!(Progress)).unwrap(), serde_json::Value::Null),
     ]
@@ -190,6 +250,7 @@ fn dispatch(cli: &Cli) -> (String, u8) {
             Ok(material) => (material, 0),
             Err(e) => envelope::<()>(Err(e)),
         },
+        Cmd::DecodeTx(args) => decode_tx(cli, args),
         Cmd::Schema { out } => {
             let all = schemas();
             if let Some(dir) = out {
@@ -213,7 +274,9 @@ fn write_schema(dir: &std::path::Path, file: &str, v: &serde_json::Value) {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let (out, code) = dispatch(&cli);
-    println!("{out}");
+    if !out.is_empty() {
+        println!("{out}");
+    }
     ExitCode::from(code)
 }
 

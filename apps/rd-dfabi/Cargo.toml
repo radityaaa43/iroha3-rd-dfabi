@@ -14,9 +14,12 @@ path = "src/main.rs"
 # Default build is the CLI/JSON contract only (seconds to compile, no iroha). CI builds `--features aps`.
 default = []
 aps = ["dep:iroha", "dep:iroha_core", "dep:iroha_data_model", "dep:iroha_crypto", "dep:iroha_model_base", "dep:norito"]
+# `decode-tx`: Norito SignedTransaction -> policy JSON for the OPA gateway. iroha_data_model + norito only, no iroha_core, no `aps`.
+decode = ["dep:iroha_data_model", "dep:iroha_crypto", "dep:iroha_model_base", "dep:norito", "dep:iroha_version"]
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -34,3 +37,4 @@ iroha_crypto = { path = "../../.iroha-src/crates/iroha_crypto", optional = true,
 # PeerId, DataSpaceId, LaneId live here; the upstream integration test imports them from this crate too.
 iroha_model_base = { path = "../../.iroha-src/crates/iroha_model_base", optional = true, default-features = false }
 norito = { path = "../../.iroha-src/crates/norito", optional = true, default-features = false, features = ["node-codec"] }
+iroha_version = { path = "../../.iroha-src/crates/iroha_version", optional = true, default-features = false, features = ["json"] }

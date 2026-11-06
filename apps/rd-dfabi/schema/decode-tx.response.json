@@ -1,0 +1,512 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "anyOf": [
+    {
+      "$ref": "#/definitions/TxView"
+    },
+    {
+      "$ref": "#/definitions/DecodeErr"
+    }
+  ],
+  "definitions": {
+    "Consent": {
+      "description": "The payload of a `CanExecuteSettlement` grant (the DvP consent), field for field.",
+      "properties": {
+        "debited_asset": {
+          "type": "string"
+        },
+        "intent_hash": {
+          "type": "string"
+        },
+        "settlement_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "debited_asset",
+        "intent_hash",
+        "settlement_id"
+      ],
+      "type": "object"
+    },
+    "DecodeErr": {
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/DecodeErrBody"
+        },
+        "ok": {
+          "description": "Always false.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "error",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "DecodeErrBody": {
+      "properties": {
+        "code": {
+          "description": "bad_content_type | decode_failed | non_canonical | too_large | needs_decode_feature | io",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Instr": {
+      "description": "One instruction. `kind` is the discriminator.",
+      "oneOf": [
+        {
+          "description": "Asset mint: `to` is the credited account.",
+          "properties": {
+            "asset_definition": {
+              "description": "Asset definition id (Base58).",
+              "type": "string"
+            },
+            "dataspace": {
+              "description": "n of `dataspace:<n>`, else null.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "from": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "mint"
+              ],
+              "type": "string"
+            },
+            "quantity": {
+              "description": "Decimal string, as printed by the data model.",
+              "type": "string"
+            },
+            "scale": {
+              "description": "Decimal scale of the quantity; 0 for whole units.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "scope": {
+              "description": "global | dataspace:<n>: the balance bucket the instruction addresses.",
+              "type": "string"
+            },
+            "to": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "asset_definition",
+            "kind",
+            "quantity",
+            "scale",
+            "scope"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Asset burn: `from` is the debited account.",
+          "properties": {
+            "asset_definition": {
+              "description": "Asset definition id (Base58).",
+              "type": "string"
+            },
+            "dataspace": {
+              "description": "n of `dataspace:<n>`, else null.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "from": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "burn"
+              ],
+              "type": "string"
+            },
+            "quantity": {
+              "description": "Decimal string, as printed by the data model.",
+              "type": "string"
+            },
+            "scale": {
+              "description": "Decimal scale of the quantity; 0 for whole units.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "scope": {
+              "description": "global | dataspace:<n>: the balance bucket the instruction addresses.",
+              "type": "string"
+            },
+            "to": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "asset_definition",
+            "kind",
+            "quantity",
+            "scale",
+            "scope"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Asset transfer (`iroha ledger asset transfer`).",
+          "properties": {
+            "asset_definition": {
+              "description": "Asset definition id (Base58).",
+              "type": "string"
+            },
+            "dataspace": {
+              "description": "n of `dataspace:<n>`, else null.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "from": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "transfer"
+              ],
+              "type": "string"
+            },
+            "quantity": {
+              "description": "Decimal string, as printed by the data model.",
+              "type": "string"
+            },
+            "scale": {
+              "description": "Decimal scale of the quantity; 0 for whole units.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "scope": {
+              "description": "global | dataspace:<n>: the balance bucket the instruction addresses.",
+              "type": "string"
+            },
+            "to": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "asset_definition",
+            "kind",
+            "quantity",
+            "scale",
+            "scope"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Native delivery-versus-payment settlement.",
+          "properties": {
+            "atomicity": {
+              "description": "all_or_nothing | commit_first_leg | commit_second_leg",
+              "type": "string"
+            },
+            "delivery": {
+              "$ref": "#/definitions/Leg"
+            },
+            "intent_hash": {
+              "description": "`DvpIsi::intent_hash` (`hash:<HEX>#<crc>`): what the buyer's consent grant must name.",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "dvp"
+              ],
+              "type": "string"
+            },
+            "order": {
+              "description": "delivery_then_payment | payment_then_delivery",
+              "type": "string"
+            },
+            "payment": {
+              "$ref": "#/definitions/Leg"
+            },
+            "settlement_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "atomicity",
+            "delivery",
+            "intent_hash",
+            "kind",
+            "order",
+            "payment",
+            "settlement_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Permission or role grant. The DvP consent (`CanExecuteSettlement`) fills `consent`.",
+          "properties": {
+            "consent": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Consent"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grant_kind": {
+              "description": "permission | role | role_permission",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "grant"
+              ],
+              "type": "string"
+            },
+            "payload": {
+              "description": "Permission payload as the chain stores it; null when absent or not JSON."
+            },
+            "permission": {
+              "description": "Permission name (e.g. CanExecuteSettlement); null for a role grant.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "to": {
+              "description": "Receiving account (I105) for permission and role grants; the role name for role_permission.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "grant_kind",
+            "kind",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Registration; `object` names what (domain, account, asset_definition, nft, role, trigger, peer).",
+          "properties": {
+            "kind": {
+              "enum": [
+                "register"
+              ],
+              "type": "string"
+            },
+            "object": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "object"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "SetKeyValue; `target` names the object type (domain, account, asset_definition, nft, trigger).",
+          "properties": {
+            "kind": {
+              "enum": [
+                "set_key_value"
+              ],
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Everything else (other instruction boxes, other Transfer/Mint/Burn variants, contract calls).",
+          "properties": {
+            "kind": {
+              "enum": [
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "raw_kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "raw_kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Leg": {
+      "properties": {
+        "asset_definition": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "string"
+        },
+        "scale": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_definition",
+        "from",
+        "quantity",
+        "scale",
+        "to"
+      ],
+      "type": "object"
+    },
+    "TxView": {
+      "properties": {
+        "admission_intent": {
+          "description": "ordinary | queue_plan_synced",
+          "type": "string"
+        },
+        "authority": {
+          "description": "Authority account (I105).",
+          "type": "string"
+        },
+        "chain_id": {
+          "description": "Network id the tx is bound to (`hash:<HEX>#<crc>`), or \"genesis\" for the genesis-only domain.",
+          "type": "string"
+        },
+        "creation_time_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "encoding": {
+          "description": "norito | json: how the body was encoded. The tx route accepts both; a policy normally denies json.",
+          "type": "string"
+        },
+        "executable": {
+          "description": "instructions | contract_call | ivm | ivm_proved | batch. Only `instructions` and `batch` fill `instructions`.",
+          "type": "string"
+        },
+        "fee_payer": {
+          "description": "authority | sponsor",
+          "type": "string"
+        },
+        "has_attachments": {
+          "description": "True when the tx carries proof attachments.",
+          "type": "boolean"
+        },
+        "has_multisig": {
+          "description": "True when the tx carries a multisig signature bundle.",
+          "type": "boolean"
+        },
+        "instructions": {
+          "description": "In order. For `batch`, contract-call items are `unknown` with raw_kind `contract_call`.",
+          "items": {
+            "$ref": "#/definitions/Instr"
+          },
+          "type": "array"
+        },
+        "nonce": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ok": {
+          "description": "Always true.",
+          "type": "boolean"
+        },
+        "signature_ok": {
+          "description": "True when the transaction signature verifies against the authority's key (Torii checks it again).",
+          "type": "boolean"
+        },
+        "time_to_live_ms": {
+          "description": "Absent only in malformed input.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tx_hash": {
+          "description": "Transaction hash, lowercase hex (what the CLI prints and `transaction status` takes).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "admission_intent",
+        "authority",
+        "chain_id",
+        "creation_time_ms",
+        "encoding",
+        "executable",
+        "fee_payer",
+        "has_attachments",
+        "has_multisig",
+        "instructions",
+        "ok",
+        "signature_ok",
+        "tx_hash"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response: exactly one of the two shapes; `ok` says which.",
+  "title": "DecodeOut"
+}

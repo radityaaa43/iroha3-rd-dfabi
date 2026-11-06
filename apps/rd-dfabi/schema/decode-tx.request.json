@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Request side: the only input besides the raw body. In `serve` mode it is the request's `Content-Type` header.",
+  "properties": {
+    "content_type": {
+      "description": "`application/x-norito` (versioned Norito SignedTransaction, what the CLI sends) or `application/json` (optionally `; charset=utf-8`). Same rule as Torii's `typed_request_content_format`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "content_type"
+  ],
+  "title": "DecodeTxReq",
+  "type": "object"
+}

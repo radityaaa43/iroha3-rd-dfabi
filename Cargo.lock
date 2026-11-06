@@ -4031,6 +4031,7 @@ name = "rd-dfabi"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "fs2",
  "hex",
@@ -4039,6 +4040,7 @@ dependencies = [
  "iroha_crypto",
  "iroha_data_model",
  "iroha_model_base",
+ "iroha_version",
  "norito",
  "schemars",
  "serde",
