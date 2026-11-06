@@ -1,5 +1,5 @@
 //! rd-dfabi: JSON-in / JSON-out CLI the Lensa TS adapter shells out to (like it does with `iroha`).
-//! Design: docs/superpowers/specs/2026-11-06-aps-helper-design.md. Every command is a stub until its milestone.
+//! Design: design-b-aps-helper.md (Lensa session scratchpad, to be copied into docs/). Every command is a stub until its milestone.
 
 mod api;
 #[cfg(feature = "aps")]
