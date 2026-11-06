@@ -57,9 +57,14 @@ if [[ ! $CHAIN_ID =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
   echo "uuidgen returned no usable chain id" >&2
   exit 1
 fi
+# --aps needs NPoS: irohad refuses a custom Nexus lane catalog unless the signed
+# genesis is NPoS (irohad main.rs, InitKura: "custom Nexus lane topology requires the
+# authenticated Sumeragi v2 mode to be NPoS"). The plain network stays permissioned.
+CONSENSUS_MODE=permissioned
+if [[ $APS == 1 ]]; then CONSENSUS_MODE=npos; fi
 docker run --rm --user "$(id -u):$(id -g)" -v "$RAW:/work/out" \
   --entrypoint kagami "$IMAGE" localnet \
-  --peers 4 --consensus-mode permissioned --chain-id "$CHAIN_ID" \
+  --peers 4 --consensus-mode "$CONSENSUS_MODE" --chain-id "$CHAIN_ID" \
   --out-dir /work/out >/dev/null
 
 # The localnet already emits BLS (bls_normal) validator keys with PoP and a
@@ -258,13 +263,13 @@ for p in parties:
 PY
 
   FEE_ASSET="$(python3 -I -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["nexus"]["fees"]["fee_asset_id"])' "$HERE/nexus.toml")"
-  jq -e --arg fee "$FEE_ASSET" 'any(.transactions[].instructions[]; .Register.AssetDefinition.id == $fee and .Register.AssetDefinition.name == "XOR")' "$RAW/genesis.json" >/dev/null \
+  jq -e --arg fee "$FEE_ASSET" 'any(.transactions[].instructions[] | objects; .Register.AssetDefinition.id == $fee and .Register.AssetDefinition.name == "XOR")' "$RAW/genesis.json" >/dev/null \
     || { echo "nexus.toml fees.fee_asset_id is not the XOR asset the localnet genesis registers" >&2; exit 1; }
   STAKE_ASSET="$(python3 -I -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["nexus"]["staking"]["stake_asset_id"])' "$HERE/nexus.toml")"
   mapfile -t LANES < <(python3 -I -c 'import sys,tomllib;[print(l["index"]) for l in tomllib.load(open(sys.argv[1],"rb"))["nexus"]["lane_catalog"] if l["index"]>0]' "$HERE/nexus.toml")
   [[ ${#LANES[@]} -eq 2 ]] || { echo "nexus.toml: expected lanes 1 and 2 besides lane 0" >&2; exit 1; }
 
-  GEN_ACCOUNT="$(jq -er 'first(.transactions[].instructions[] | select(.Grant.Permission.object.name == "CanSetParameters")) | .Grant.Permission.destination' "$RAW/genesis.json")"
+  GEN_ACCOUNT="$(jq -er 'first(.transactions[].instructions[] | objects | select(.Grant.Permission.object.name == "CanSetParameters")) | .Grant.Permission.destination' "$RAW/genesis.json")"
   # RD/DFABI first (unchanged jq), then the lane validators in a transaction of
   # their own, cloned from the lane-0 bootstrap kagami wrote: the same 4
   # validators stake a further 10000 each per lane (mint + register + activate,
@@ -275,10 +280,10 @@ PY
      --arg gen "$GEN_ACCOUNT" --arg rd "$RD_ID" --arg dfabi "$DFABI_ID" \
      -f "$HERE/genesis-rd-dfabi.jq" "$RAW/genesis.json" >"$TMP/genesis.rd.json"
   jq --arg stake "$STAKE_ASSET" --argjson lanes "$(printf '%s\n' "${LANES[@]}" | jq -sc .)" '
-    ([.transactions[].instructions[] | select(has("RegisterPublicLaneValidator")).RegisterPublicLaneValidator
+    ([.transactions[].instructions[] | objects | select(has("RegisterPublicLaneValidator")).RegisterPublicLaneValidator
       | select(.lane_id == 0)]) as $v
     | if ($v | length) != 4 then error("expected 4 lane-0 validators, found \($v | length)") else . end
-    | if any(.transactions[].instructions[]; .Register.AssetDefinition.id == $stake) then . else error("stake asset \($stake) is not registered in genesis") end
+    | if any(.transactions[].instructions[] | objects; .Register.AssetDefinition.id == $stake) then . else error("stake asset \($stake) is not registered in genesis") end
     | .transactions += [{instructions: [
         $lanes[] as $lane | $v[] | (
           {Mint: {Asset: {destination: ($stake + "#" + .validator), object: .initial_stake}}},

@@ -126,6 +126,11 @@ assert [d["alias"] for d in dss] == ["universal", "ds-rd", "ds-dfabi"]
 assert [l["dataspace"] for l in lanes] == [d["alias"] for d in dss]
 assert [l["visibility"] for l in lanes] == ["public", "restricted", "restricted"]
 ' "$NEXUS"
+# irohad InitKura refuses a custom lane catalog unless the signed genesis is NPoS
+# (crates/irohad/src/main.rs, "custom Nexus lane topology requires ... to be NPoS").
+# genesis.json records the mode as "consensus_mode": "Npos" / "Permissioned".
+check "$OUT/genesis/genesis.json: consensus_mode is Npos (required by a custom lane catalog)" \
+  jq -e '.consensus_mode == "Npos"' "$OUT/genesis/genesis.json"
 fi
 
 # --- real-binary validation (verifies the #XXXX address checksums too) -------
