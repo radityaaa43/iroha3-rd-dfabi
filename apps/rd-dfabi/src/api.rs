@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Frontend party ids (frontend/server/src/domain.ts PartyId).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum Party {
     BI,
     A,
@@ -19,7 +19,7 @@ pub enum Party {
     C,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum Asset {
     #[serde(rename = "RD")]
     Rd,
@@ -81,10 +81,10 @@ pub struct KeysInitReq {
 pub struct KeysInitResp {
     pub party: Party,
     pub wallet_dir: String,
-    /// X25519 view public key new notes are encrypted to (public).
-    pub receive_view_key: Hex32,
-    /// Spending authority = hash of the note spending secret (public).
-    pub receive_authority: Hex32,
+    /// X25519 view public key of receive slot 0 (public). null while the crypto backend is not built (no `aps` feature).
+    pub receive_view_key: Option<Hex32>,
+    /// Spending authority of receive slot 0 = hash of the note spending secret (public). null like the view key.
+    pub receive_authority: Option<Hex32>,
     /// BI only: auditor hybrid (X25519 + ML-KEM-768) public key placed in the audit policy.
     pub auditor_encryption_key: Option<String>,
 }
@@ -119,9 +119,12 @@ pub struct PoolActivateReq {
 pub struct PoolInfo {
     pub asset: Asset,
     pub pool_id: Hex32,
-    pub route: Route,
-    /// Opaque binding commitment of the asset definition (what the chain shows).
-    pub asset_binding_commitment: Hex32,
+    /// null until the lifecycle read exists (aps build); dry-run plans have no route yet.
+    pub route: Option<Route>,
+    /// Opaque binding commitment of the asset definition (what the chain shows). null in M1 plans.
+    pub asset_binding_commitment: Option<Hex32>,
+    /// Root of the origin tree = the sorted initial commitments the activation transaction would carry.
+    pub origin_root: Hex32,
     pub notes: u32,
     pub tx_hash: Option<Hex32>,
     pub block: Option<u64>,
@@ -275,7 +278,7 @@ pub struct BalancesReq {
     pub party: Option<Party>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Balance {
     pub party: Party,
     pub asset: Asset,
@@ -328,8 +331,9 @@ pub struct DoctorCheck {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DoctorResp {
-    pub height: u64,
-    /// privacy capability Active AND height >= nexus.atomic_private_settlement.activation_height.
-    pub aps_active: bool,
+    /// null while chain reads are not built (no `aps` feature).
+    pub height: Option<u64>,
+    /// privacy capability Active AND height >= nexus.atomic_private_settlement.activation_height. null like height.
+    pub aps_active: Option<bool>,
     pub checks: Vec<DoctorCheck>,
 }

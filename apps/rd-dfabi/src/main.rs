@@ -1,7 +1,13 @@
 //! rd-dfabi: JSON-in / JSON-out CLI the Lensa TS adapter shells out to (like it does with `iroha`).
-//! Design: design-b-aps-helper.md (Lensa session scratchpad, to be copied into docs/). Every command is a stub until its milestone.
+//! Design: design-b-aps-helper.md (Lensa session scratchpad, to be copied into docs/).
+//! M1 live: keys init, pool activate (dry_run plan), balances, doctor (local checks). The rest are stubs until their milestone.
+//! Crypto that needs iroha goes through `backend::Backend`; the light build uses `NoAps`, the aps build will plug the real one in.
 
 mod api;
+mod backend;
+mod cmds;
+mod store;
+mod tree;
 #[cfg(feature = "aps")]
 mod aps;
 
@@ -90,6 +96,9 @@ fn read_input<T: DeserializeOwned>(path: &Option<PathBuf>) -> Result<T> {
             std::io::stdin().read_to_string(&mut raw)?;
         }
     }
+    if raw.trim().is_empty() {
+        raw = "{}".into(); // commands whose request fields are all optional (balances, doctor)
+    }
     serde_json::from_str(&raw).context("request is not valid JSON for this command")
 }
 
@@ -99,6 +108,14 @@ fn envelope<T: Serialize>(r: Result<T, ErrorBody>) -> (String, u8) {
         Err(error) => (false, Envelope { ok: false, data: None, error: Some(error) }),
     };
     (serde_json::to_string(&env).expect("envelope serialises"), if ok { 0 } else { 3 })
+}
+
+fn internal(m: String) -> ErrorBody {
+    ErrorBody { code: "internal".into(), message: m, retryable: false }
+}
+
+fn open_store(cli: &Cli) -> Result<store::Store, ErrorBody> {
+    store::Store::open(&cli.home).map_err(internal)
 }
 
 fn not_implemented<T>(cmd: &str) -> Result<T, ErrorBody> {
@@ -136,17 +153,23 @@ fn schemas() -> Vec<(&'static str, serde_json::Value, serde_json::Value)> {
 
 fn dispatch(cli: &Cli) -> (String, u8) {
     match &cli.cmd {
-        Cmd::Keys(KeysCmd::Init) => call(cli, "keys init", |_, _: KeysInitReq| not_implemented::<KeysInitResp>("keys init")),
-        Cmd::Pool(PoolCmd::Activate) => call(cli, "pool activate", |_, _: PoolActivateReq| not_implemented::<PoolActivateResp>("pool activate")),
+        Cmd::Keys(KeysCmd::Init) => call(cli, "keys init", |c, q: KeysInitReq| {
+            let seed = store::random32().map_err(internal)?;
+            cmds::keys_init(&open_store(c)?, &backend::NoAps, q, seed)
+        }),
+        Cmd::Pool(PoolCmd::Activate) => call(cli, "pool activate", |c, q: PoolActivateReq| {
+            let store = open_store(c)?;
+            cmds::pool_activate(&store, &backend::NoAps, &q, || store::random32().expect("urandom"))
+        }),
         Cmd::Dvp => call(cli, "dvp", |_, _: DvpReq| not_implemented::<DvpResp>("dvp")),
         Cmd::Status => call(cli, "status", |_, _: BundleReq| not_implemented::<StatusResp>("status")),
         Cmd::Receipt => call(cli, "receipt", |_, _: BundleReq| not_implemented::<StatusResp>("receipt")),
         Cmd::Capsule(CapsuleCmd::Open) => call(cli, "capsule open", |_, _: CapsuleOpenReq| not_implemented::<CapsuleOpenResp>("capsule open")),
         Cmd::Note(NoteCmd::Decrypt) => call(cli, "note decrypt", |_, _: NoteDecryptReq| not_implemented::<NoteDecryptResp>("note decrypt")),
-        Cmd::Balances => call(cli, "balances", |_, _: BalancesReq| not_implemented::<BalancesResp>("balances")),
+        Cmd::Balances => call(cli, "balances", |c, q: BalancesReq| cmds::balances(&open_store(c)?, &q)),
         Cmd::Auditor(AuditorCmd::Approve) => call(cli, "auditor approve", |_, _: AuditorApproveReq| not_implemented::<AuditorApproveResp>("auditor approve")),
         Cmd::Auditor(AuditorCmd::Run) => envelope::<()>(not_implemented("auditor run")),
-        Cmd::Doctor => call(cli, "doctor", |_, _: DoctorReq| not_implemented::<DoctorResp>("doctor")),
+        Cmd::Doctor => call(cli, "doctor", |c, _: DoctorReq| cmds::doctor(&open_store(c)?)),
         Cmd::Schema { out } => {
             let all = schemas();
             if let Some(dir) = out {

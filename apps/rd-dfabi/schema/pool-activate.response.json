@@ -53,8 +53,11 @@
           "$ref": "#/definitions/Asset"
         },
         "asset_binding_commitment": {
-          "description": "Opaque binding commitment of the asset definition (what the chain shows).",
-          "type": "string"
+          "description": "Opaque binding commitment of the asset definition (what the chain shows). null in M1 plans.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "block": {
           "format": "uint64",
@@ -69,11 +72,23 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "origin_root": {
+          "description": "Root of the origin tree = the sorted initial commitments the activation transaction would carry.",
+          "type": "string"
+        },
         "pool_id": {
           "type": "string"
         },
         "route": {
-          "$ref": "#/definitions/Route"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Route"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "null until the lifecycle read exists (aps build); dry-run plans have no route yet."
         },
         "tx_hash": {
           "type": [
@@ -84,10 +99,9 @@
       },
       "required": [
         "asset",
-        "asset_binding_commitment",
         "notes",
-        "pool_id",
-        "route"
+        "origin_root",
+        "pool_id"
       ],
       "type": "object"
     },

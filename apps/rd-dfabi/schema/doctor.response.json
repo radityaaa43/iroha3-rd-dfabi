@@ -23,8 +23,11 @@
     "DoctorResp": {
       "properties": {
         "aps_active": {
-          "description": "privacy capability Active AND height >= nexus.atomic_private_settlement.activation_height.",
-          "type": "boolean"
+          "description": "privacy capability Active AND height >= nexus.atomic_private_settlement.activation_height. null like height.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "checks": {
           "items": {
@@ -33,15 +36,17 @@
           "type": "array"
         },
         "height": {
+          "description": "null while chain reads are not built (no `aps` feature).",
           "format": "uint64",
           "minimum": 0.0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
-        "aps_active",
-        "checks",
-        "height"
+        "checks"
       ],
       "type": "object"
     },

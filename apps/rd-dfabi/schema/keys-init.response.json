@@ -35,12 +35,18 @@
           "$ref": "#/definitions/Party"
         },
         "receive_authority": {
-          "description": "Spending authority = hash of the note spending secret (public).",
-          "type": "string"
+          "description": "Spending authority of receive slot 0 = hash of the note spending secret (public). null like the view key.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "receive_view_key": {
-          "description": "X25519 view public key new notes are encrypted to (public).",
-          "type": "string"
+          "description": "X25519 view public key of receive slot 0 (public). null while the crypto backend is not built (no `aps` feature).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "wallet_dir": {
           "type": "string"
@@ -48,8 +54,6 @@
       },
       "required": [
         "party",
-        "receive_authority",
-        "receive_view_key",
         "wallet_dir"
       ],
       "type": "object"
