@@ -36,6 +36,9 @@ done
 hash8=$(sed -E 's/^hash:([0-9A-Fa-f]{8}).*/\1/' "$PUB/genesis.expected_hash" | tr 'A-F' 'a-f')
 [[ "$hash8" =~ ^[0-9a-f]{8}$ ]] || { echo "bad $PUB/genesis.expected_hash" >&2; exit 1; }
 cm="genesis-$hash8"
+# deploy/k8s/kustomization.yaml carries the one hand-edited copy of hash8 (the ConfigMap name derives from it).
+grep -q "iroha3-rd/genesis: \"$hash8\"" deploy/k8s/kustomization.yaml ||
+  { echo "refusing: set iroha3-rd/genesis to \"$hash8\" in deploy/k8s/kustomization.yaml first" >&2; exit 1; }
 
 # stdin: generated manifest -> add label locally -> apply
 apply() { kubectl label --local -f - "$LABEL" -o yaml | kubectl apply -n "$NS" -f - ${APPLY[@]+"${APPLY[@]}"}; }

@@ -1,0 +1,105 @@
+# Nexus overlay for the 3-lane APS topology (gate G1b). generate.sh --aps merges
+# this file into every peer.toml (overlay wins). Shape follows localnet_builder in
+# upstream integration_tests/tests/nexus/atomic_private_settlement_localnet.rs @ 071e281e.
+#
+# lane 0 universal  (dataspace 0, public)
+# lane 1 ds-rd      (dataspace 1, restricted)
+# lane 2 ds-dfabi   (dataspace 2, restricted)
+# All 4 validators (bi, bank-a, bank-b, bank-c) are active in all 3 lanes; each
+# dataspace has fault_tolerance = 1, so a committee of 3f+1 = 4.
+
+[nexus]
+lane_count = 3
+
+[[nexus.lane_catalog]]
+index = 0
+alias = "universal"
+dataspace = "universal"
+visibility = "public"
+
+[[nexus.lane_catalog]]
+index = 1
+alias = "ds-rd"
+dataspace = "ds-rd"
+visibility = "restricted"
+
+[[nexus.lane_catalog]]
+index = 2
+alias = "ds-dfabi"
+dataspace = "ds-dfabi"
+visibility = "restricted"
+
+# Dataspace 0 is the reserved universal id. Non-universal dataspaces must carry a
+# manifest_hash and the id is derived from it; 01 00..00 and 02 00..00 derive ids 1
+# and 2, the same hashes the upstream test uses.
+[[nexus.dataspace_catalog]]
+alias = "universal"
+id = 0
+description = "universal dataspace"
+fault_tolerance = 1
+
+[[nexus.dataspace_catalog]]
+alias = "ds-rd"
+id = 1
+manifest_hash = "0100000000000000000000000000000000000000000000000000000000000000"
+description = "Rupiah Digital dataspace"
+fault_tolerance = 1
+
+[[nexus.dataspace_catalog]]
+alias = "ds-dfabi"
+id = 2
+manifest_hash = "0200000000000000000000000000000000000000000000000000000000000000"
+description = "DFABI dataspace"
+fault_tolerance = 1
+
+[nexus.routing_policy]
+default_lane = 0
+default_dataspace = "universal"
+
+# Every lane runs stake-elected validators. The stake asset is the one kagami
+# localnet registers in genesis for the lane-0 bootstrap (deterministic id). Escrow
+# and slash sink are the accounts kagami draws per run: generate.sh --aps replaces
+# the two placeholders with the values its localnet genesis registered.
+[nexus.staking]
+public_validator_mode = "stake_elected"
+restricted_validator_mode = "stake_elected"
+stake_asset_id = "5tTiKE1CkjJoGHhmf5FxQoSg5hMt"
+stake_escrow_account_id = "@STAKE_ESCROW_ACCOUNT_ID@"
+slash_sink_account_id = "@SLASH_SINK_ACCOUNT_ID@"
+max_validators = 4
+
+[zk.stark]
+enabled = true
+
+# Fees as in upstream localnet_builder: only the per-instruction fee is non-zero, so
+# a settlement carrier costs an exact, predictable amount. The fee asset is the XOR
+# the localnet genesis registers; the four party accounts already hold 1000 XOR each
+# (genesis-rd-dfabi.jq), which is the sponsor balance for the carriers.
+[nexus.fees]
+fee_asset_id = "6TEAJqbb8oEPmLncoNiMRbLEK6tw"
+base_fee = "0"
+per_byte_fee = "0"
+per_instruction_fee = "0.001"
+per_gas_unit_fee = "0"
+# Sink and sponsor-vault custody are the account kagami registers as pipeline.gas
+# tech account (as localnet.rs does for its NPoS bootstrap); generate.sh fills it in.
+fee_sink_account_id = "@GAS_TECH_ACCOUNT_ID@"
+sponsor_vault_custody_account_id = "@GAS_TECH_ACCOUNT_ID@"
+
+# Explicit Nexus storage budget: 3 GiB, below the ~3.9 GiB a 5Gi PVC leaves at the 80% start rule. Set, iroha3d skips the
+# filesystem headroom derivation (irohad main.rs derive_runtime_nexus_storage_budget).
+[nexus.storage]
+local_budget_bytes = 3221225472
+
+# Atomic private settlement: shipped defaults except the activation notice, cut
+# from 7200 to 10 blocks for the PoC. activation_height = proposed_at_height of the
+# privacy-protocol activation in genesis (1) + minimum_activation_notice_blocks (state.rs
+# ensure_private_settlement_feature_active_v1).
+[nexus.atomic_private_settlement]
+enabled = true
+activation_height = 11
+minimum_activation_notice_blocks = 10
+max_expiry_blocks = 7200
+audit_timeout_blocks = 1200
+prepare_timeout_blocks = 1200
+commit_timeout_blocks = 1200

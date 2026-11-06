@@ -11,20 +11,20 @@ resources:
 # Changing it requires scripts/wipe-network.sh first (deploy.yml refuses otherwise).
 labels:
   - pairs:
-      iroha3-rd/genesis: "9a4a1989"
+      iroha3-rd/genesis: "d23c355a"
     includeTemplates: true
-patches:
-  - target:
+# The genesis ConfigMap name (base: genesis-HASH) is derived from the label above, so a new
+# genesis is ONE edit. deploy/secrets.sh refuses to run if this label != the genesis hash8.
+replacements:
+  - source:
       kind: StatefulSet
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: any
-      spec:
-        template:
-          spec:
-            volumes:
-              - name: genesis
-                configMap:
-                  name: genesis-9a4a1989
+      name: bi
+      fieldPath: spec.template.metadata.labels.iroha3-rd/genesis
+    targets:
+      - select:
+          kind: StatefulSet
+        fieldPaths:
+          - spec.template.spec.volumes.[name=genesis].configMap.name
+        options:
+          delimiter: "-"
+          index: 1

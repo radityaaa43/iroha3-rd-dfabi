@@ -108,6 +108,26 @@ for p in "${PARTIES[@]}"; do
   fi
 done
 
+# --- Nexus lanes (G1b): exactly 3 lanes / dataspace ids 0,1,2 ---------------
+# Upstream shape: nexus.lane_count, [[nexus.lane_catalog]] {index,alias,dataspace,visibility},
+# [[nexus.dataspace_catalog]] {alias,id,fault_tolerance}. NEXUS overrides the path (fixtures).
+# Only in aps mode (generated peer.toml carries [[nexus.lane_catalog]]); a non-aps network has no lanes.
+NEXUS="${NEXUS:-nexus.toml}"
+if grep -qs '^\[\[nexus\.lane_catalog\]\]' "$OUT"/*/peer.toml; then
+check "$NEXUS: 3 lanes, dataspace ids 0,1,2 (universal public, ds-rd + ds-dfabi restricted)" \
+  python3 -I -c '
+import sys, tomllib
+n = tomllib.load(open(sys.argv[1], "rb"))["nexus"]
+lanes, dss = n["lane_catalog"], n["dataspace_catalog"]
+assert n["lane_count"] == len(lanes) == len(dss) == 3
+assert [l["index"] for l in lanes] == [0, 1, 2]
+assert [d["id"] for d in dss] == [0, 1, 2]
+assert [d["alias"] for d in dss] == ["universal", "ds-rd", "ds-dfabi"]
+assert [l["dataspace"] for l in lanes] == [d["alias"] for d in dss]
+assert [l["visibility"] for l in lanes] == ["public", "restricted", "restricted"]
+' "$NEXUS"
+fi
+
 # --- real-binary validation (verifies the #XXXX address checksums too) -------
 # Output is suppressed: configs contain private keys. Only exit status is used.
 IMAGE="${IMAGE:-ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark}"
@@ -116,10 +136,12 @@ if [[ -d $OUT ]] && command -v docker >/dev/null; then
   # headroom (AUTO_STORAGE_HEADROOM_BPS), so a host disk over 80% full fails the check.
   for p in "${PARTIES[@]}"; do
     [[ -f $OUT/$p/peer.toml ]] || continue
+    # aps peer.toml (custom lane_catalog) is rejected by iroha3d without --sora, as in the StatefulSet.
+    sora=(); grep -q '^\[\[nexus\.lane_catalog\]\]' "$OUT/$p/peer.toml" && sora=(--sora)
     check "$p: iroha3d --check-config accepts peer.toml + signed genesis" \
       docker run --rm --user "$(id -u):$(id -g)" \
         -v "$PWD/$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PWD/$PUB:/genesis:ro" --tmpfs /storage:rw,size=2g,mode=1777 \
-        --entrypoint iroha3d "$IMAGE" --check-config --config /config/peer.toml
+        --entrypoint iroha3d "$IMAGE" ${sora[@]+"${sora[@]}"} --check-config --config /config/peer.toml
   done
 else
   fail "docker or network/out missing: cannot run iroha3d --check-config"

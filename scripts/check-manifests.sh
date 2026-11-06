@@ -28,6 +28,13 @@ bad=$(jq -r '.[] | .metadata.name as $p | .spec.template.spec.volumes[]? | .secr
 bad=$(jq -r '.[] | .metadata.name as $p | .spec.template.spec.containers[] | select(.image != "'"$IMAGE"'") | "\($p): \(.image)"' <<<"$sts")
 [[ -z $bad ]] && ok "image $IMAGE" || fail "wrong image: $bad"
 
+bad=$(jq -r '.[] | select(.spec.template.spec.containers[0].args | index("--sora") | not) | .metadata.name' <<<"$sts")
+[[ -z $bad ]] && ok "iroha3d --sora (multi-lane needs it)" || fail "missing --sora: $bad"
+
+bad=$(jq -r '.[] | .metadata.labels["iroha3-rd/genesis"] as $h | .spec.template.spec.volumes[]? | select(.name == "genesis")
+  | select(.configMap.name != "genesis-\($h)") | "\(.configMap.name) != genesis-\($h)"' <<<"$sts") || bad="jq error"
+[[ -z $bad ]] && ok "genesis ConfigMap name matches genesis label" || fail "genesis ConfigMap/label mismatch: $bad"
+
 bad=$(jq -r '.[] | select(.spec.updateStrategy.type != "OnDelete") | .metadata.name' <<<"$sts")
 [[ -z $bad ]] && ok "updateStrategy OnDelete" || fail "updateStrategy not OnDelete: $bad"
 
