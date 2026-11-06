@@ -178,4 +178,15 @@ cores with timeout-certificate view change). PR #5653 (2026-11-03, closed unmerg
 not compile". HEAD builds with Rust 1.99.1 (ours 1.93.1), APS config knobs are retired, and genesis is incompatible
 (wipe + redo Task 8).
 
-Track 2 probe (CI-only `cargo build` of candidate pins `929a6068`, `e3bbd985`): pending.
+Track 2 probe (2026-11-06; CI-only `cargo build --release -p irohad -p iroha_cli -p iroha_kagami` with each pin's own
+toolchain, GitHub-hosted runner, branch `probe/upstream-pins` @ `44a0fe5` of the public build repo, one attempt per pin):
+
+| Pin | Compiles | Run | First error |
+|---|---|---|---|
+| `929a6068` | NO | 42182538054 (07:41→09:51Z) | `error[E0308]: mismatched types` at `crates/irohad/src/sccp_keeper.rs:631` (`AcceptedTransaction::accept` args); also `E0277` at `crates/irohad/src/main.rs:8940`; "could not compile `irohad_lib` (lib) due to 4 previous errors" |
+| `e3bbd985` | YES | 42182666718 (07:42→09:50Z) | none (build only: no image, no tests) |
+
+Option G stays PARKED (R2 exempt per charter). Before G could replace 071e281e it would still need: the upstream
+`localnet_npos`, `multilane_pipeline` and `atomic_private_settlement_localnet` tests passing with a validator stopped,
+and a full redo of Task 8 because the genesis format is incompatible (wipe + new genesis). `probe/upstream-pins` is kept
+as the evidence; it holds only the probe workflow.
