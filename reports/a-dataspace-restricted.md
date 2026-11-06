@@ -197,3 +197,20 @@ Canary read results (BI's mint, read by A and C):
 Because of this, the dataspace-grant evidence (success check 3) is deferred to the post-bootstrap A to B
 rd-transfer: A and B read the tx; C reads the tx and A's balance (expect 403); C reads its own balance.
 The exact codes will be recorded then.
+
+## Results after bootstrap (2026-11-06)
+
+Frontend merge `02f3f71` (feat/iroha3-dsr onto 9ddcf0b, 3 server files, tsc 0, iroha3 tests 53/53, not pushed); bootstrap funded A/B/C with RD 10000000000000 and DFABI 1000 each; one `lensa` restart.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. ds1 execution | **PASS by construction** | RD/DFABI are DataspaceRestricted to ds1 and execution rejects a leg whose scope does not match the route (`asset.rs:5555-5565`, `public_balance_scope.rs:76-83`), so every Applied mint/transfer of them executed in ds1. Canary mint `1f48a65e…` Applied; bootstrap mints moved balances; blocks 7→25. `teu_dataspace_backlog.tx_served` is frozen at post-genesis values on 071e281e (lane0/ds0 = 45, lane1/ds1 = 3 before and after every tx) and is not usable as a metric. Lane-local block heights are only on operator-gated `/v1/sumeragi/status` (401 unsigned; node key not used by decision). |
+| 2. DvP A→B 5 via Lensa | **PASS** | tx `a01e2fee51848e5ab5a8f3e8a0fda8d446cf9d8aaff223604a4b40d07d2bdaf7`, block 31. A: DFABI 1000→995, RD +5000000; B: DFABI 1000→1005, RD −5000000. |
+| 3. Read matrix (rd-transfer A→B 1, tx `0bebe544e810f195ff005572e897649369639e507ca60fb20a532f56d877056b`, block 34), each party's own account key | **PARTIAL** (see below) | A: tx get OK, own balance OK. B: tx get OK; A's balance HTTP 403 `query_validation_failed` "exact CanReadAccountData permission is required to read account". C: tx get HTTP 403 `query_validation_failed: transaction-details`; A's balance HTTP 403 CanReadAccountData; C's own ds1 balance OK (10000000000000). BI: tx get HTTP 403 `transaction-details`; A's balance HTTP 403 CanReadAccountData. Operator account on bank-c's node (`op-bank-c`, CanReadAllLedgerData): tx get OK. |
+| 4. Lensa | **PASS** | `/api/health` all five models ready (iroha3 "Empat validator Iroha 3 menjawab"); `/api/balance?model=iroha3&party=C` returns RD/DFABI via the operator. Zeto and Noto balance reads OK after the restart; gateway sink reports bi zeto 39 / noto 11 on nodes 1-4, all ready. |
+
+What check 3 actually shows:
+- The denials are the account/transaction-party rules (`query_validation_failed`: CanReadAccountData, transaction-details), not the restricted-dataspace route gate ("cannot read N requested restricted dataspace route(s)" never appeared). Parties read their own tx and own balances; non-parties do not, through their own account keys.
+- The CanReadRestrictedDataspace grants to BI/A/B are therefore not what separates C from the parties on these queries.
+- BI's own account key cannot read the A→B tx or A's balance. BI sees everything only through the shared operator account (CanReadAllLedgerData), which is the same key on every node, including bank-c's.
+- Residuals unchanged: bank-c's validator stores lane-1 blocks in plaintext and the operator reads them on bank-c's node. R1 is NOT met by (a); it needs the APS path (b).
