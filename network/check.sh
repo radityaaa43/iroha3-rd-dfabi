@@ -4,8 +4,9 @@
 set -uo pipefail
 
 cd "$(dirname "$0")"
-PUB=public
-OUT=out
+# NETWORK_OUT / NETWORK_PUB as in generate.sh (testing against a generate.sh run elsewhere)
+PUB="$(realpath -m "${NETWORK_PUB:-public}")"
+OUT="$(realpath -m "${NETWORK_OUT:-out}")"
 PARTIES=(bi bank-a bank-b bank-c)
 fails=0
 
@@ -131,6 +132,36 @@ assert [l["visibility"] for l in lanes] == ["public", "restricted", "restricted"
 # genesis.json records the mode as "consensus_mode": "Npos" / "Permissioned".
 check "$OUT/genesis/genesis.json: consensus_mode is Npos (required by a custom lane catalog)" \
   jq -e '.consensus_mode == "Npos"' "$OUT/genesis/genesis.json"
+# RD and DFABI are DataspaceRestricted, share one restricted home dataspace (domain wonderland.<ds>, alias <name>#wonderland.<ds>)
+# and only BI, A and B (3 of the 4 party accounts) may read the restricted dataspaces: C, the outsider, gets 403 from Torii.
+check "genesis.json: RD+DFABI DataspaceRestricted in one restricted dataspace; BI/A/B read every restricted dataspace, C none" \
+  python3 -I -c '
+import json, sys, tomllib
+g = json.load(open(sys.argv[1]))
+n = tomllib.load(open(sys.argv[2], "rb"))["nexus"]
+ids = {d["alias"]: d["id"] for d in n["dataspace_catalog"]}
+lanes = {l["dataspace"]: l["visibility"] for l in n["lane_catalog"]}
+restricted = sorted(ids[a] for a, v in lanes.items() if v == "restricted")
+ins = [i for t in g["transactions"] for i in t["instructions"] if isinstance(i, dict)]
+defs = {d["name"]: d for i in ins if "Register" in i and "AssetDefinition" in i["Register"] for d in [i["Register"]["AssetDefinition"]] if d["name"] in ("RD", "DFABI")}
+assert set(defs) == {"RD", "DFABI"}, defs.keys()
+homes = {d["owning_domain"].split(".")[-1] for d in defs.values()}
+assert len(homes) == 1 and lanes[homes.copy().pop()] == "restricted", homes
+assert all(d["balance_scope_policy"] == "DataspaceRestricted" for d in defs.values())
+home = homes.pop()
+assert sum(1 for i in ins if "Register" in i and "Domain" in i["Register"] and i["Register"]["Domain"]["id"] == "wonderland." + home) == 1
+aliases = {i["SetAssetDefinitionAlias"]["asset_definition_id"]: i["SetAssetDefinitionAlias"]["alias"] for i in ins if "SetAssetDefinitionAlias" in i}
+for name, d in defs.items():
+    assert aliases.get(d["id"]) == name.lower() + "#wonderland." + home, (name, aliases.get(d["id"]))
+fee = n["fees"]["fee_asset_id"]
+parties = {i["Mint"]["Asset"]["destination"].split("#")[1] for i in ins if "Mint" in i and i["Mint"]["Asset"]["destination"].startswith(fee + "#") and i["Mint"]["Asset"]["object"] == "1000"}
+assert len(parties) == 4, parties
+grants = [i["Grant"]["Permission"] for i in ins if "Grant" in i and i["Grant"]["Permission"]["object"]["name"] == "CanReadRestrictedDataspace"]
+readers = {}
+for p in grants: readers.setdefault(p["destination"], []).append(p["object"]["payload"]["dataspace"])
+assert len(readers) == 3 and set(readers) < parties, readers.keys()
+assert all(sorted(v) == restricted for v in readers.values()), readers.values()
+' "$OUT/genesis/genesis.json" "$NEXUS"
 # A genesis gas-accepted-assets parameter without node-config accepted_assets makes Torii quote
 # a Nexus fee only while execution also requires a PipelineGas limit: every tx is Rejected.
 check "genesis.json has no ivm_gas_accepted_assets unless peer.toml [pipeline.gas] sets accepted_assets" \
@@ -150,7 +181,7 @@ if [[ -d $OUT ]] && command -v docker >/dev/null; then
     sora=(); grep -q '^\[\[nexus\.lane_catalog\]\]' "$OUT/$p/peer.toml" && sora=(--sora)
     check "$p: iroha3d --check-config accepts peer.toml + signed genesis" \
       docker run --rm --user "$(id -u):$(id -g)" \
-        -v "$PWD/$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PWD/$PUB:/genesis:ro" --tmpfs /storage:rw,size=2g,mode=1777 \
+        -v "$OUT/$p/peer.toml:/config/peer.toml:ro" -v "$PUB:/genesis:ro" --tmpfs /storage:rw,size=2g,mode=1777 \
         --entrypoint iroha3d "$IMAGE" ${sora[@]+"${sora[@]}"} --check-config --config /config/peer.toml
   done
 else

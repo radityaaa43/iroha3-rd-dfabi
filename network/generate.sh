@@ -165,10 +165,13 @@ PY
 # block in $RAW so the public bundle below carries the lane-aware genesis.
 if [[ $APS == 1 ]]; then
   : "${PARTY_ACCOUNTS:?--aps needs PARTY_ACCOUNTS=<json file with the 4 party account ids>}"
-  # Domainless ids = AssetDefinitionId::derive_from_components("rd"|"dfabi", "wonderland"),
-  # the ids the frontend (bootstrap-iroha3.ts) and the live network use.
+  # Definition ids are opaque values (not checked against their owning domain), kept equal to the
+  # ones the frontend (bootstrap-iroha3.ts) and the earlier Global-asset network use:
+  # AssetDefinitionId::derive_from_components("rd"|"dfabi", "wonderland").
   RD_ID=7onbjg2gRXveoAAUFsohCZyGW98t
   DFABI_ID=4mBWK1JCwQdHLDPpuVKc56eLsXka
+  # RD and DFABI are DataspaceRestricted and share this home dataspace (see genesis-rd-dfabi.jq for why one).
+  HOME_DS=ds-rd
 
   python3 -I - "$HERE/nexus.toml" "$OUT" "${PARTIES[@]}" <<'PY'
 import json, sys, tomllib
@@ -270,14 +273,17 @@ PY
   [[ ${#LANES[@]} -eq 2 ]] || { echo "nexus.toml: expected lanes 1 and 2 besides lane 0" >&2; exit 1; }
 
   GEN_ACCOUNT="$(jq -er 'first(.transactions[].instructions[] | objects | select(.Grant.Permission.object.name == "CanSetParameters")) | .Grant.Permission.destination' "$RAW/genesis.json")"
-  # RD/DFABI first (unchanged jq), then the lane validators in a transaction of
+  # RD/DFABI first (genesis-rd-dfabi.jq), then the lane validators in a transaction of
   # their own, cloned from the lane-0 bootstrap kagami wrote: the same 4
   # validators stake a further 10000 each per lane (mint + register + activate,
   # the genesis_post_topology pattern). The stake asset already exists: kagami
   # localnet registers it for the lane-0 bootstrap.
+  # readds = every restricted dataspace id = lane indexes 1..n (check.sh asserts lane index == dataspace id)
   jq --arg bi "$(jq -er '.["bi"]' "$PARTY_ACCOUNTS")" --arg a "$(jq -er '.["bank-a"]' "$PARTY_ACCOUNTS")" \
      --arg b "$(jq -er '.["bank-b"]' "$PARTY_ACCOUNTS")" --arg c "$(jq -er '.["bank-c"]' "$PARTY_ACCOUNTS")" \
      --arg gen "$GEN_ACCOUNT" --arg rd "$RD_ID" --arg dfabi "$DFABI_ID" \
+     --arg domain "wonderland.$HOME_DS" \
+     --argjson readds "$(printf '%s\n' "${LANES[@]}" | jq -sc .)" \
      -f "$HERE/genesis-rd-dfabi.jq" "$RAW/genesis.json" >"$TMP/genesis.rd.json"
   jq --arg stake "$STAKE_ASSET" --argjson lanes "$(printf '%s\n' "${LANES[@]}" | jq -sc .)" '
     ([.transactions[].instructions[] | objects | select(has("RegisterPublicLaneValidator")).RegisterPublicLaneValidator
