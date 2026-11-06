@@ -62,8 +62,11 @@ model.
    four nodes) can read all of it on bank-c's node. C's 403 is a Torii API permission, not
    confidentiality.
 2. **The read grant is per dataspace, not per transaction.** BI, A and B can read ALL `ds-rd` data,
-   including the transactions and balances of C. C cannot read even its own balances through its own
-   account; Lensa reads balances via the node operator account (`op-*`, `--scope dataspace:1`).
+   including the transactions and balances of C. C can read its own ds1 assets: `FindAssetById` on
+   one's own account is not fan-out gated (live canary: C's own read returned
+   `query_validation_failed` "Failed to find asset ...#dataspace:1", i.e. not found because C has no
+   balance yet, not a 403). C cannot read other accounts' data or transactions (see the canary below).
+   Lensa reads balances via the node operator account (`op-*`, `--scope dataspace:1`).
 3. **R1 is not met.** R1 ("only BI, sender and receiver see a transaction") does not hold with (a)
    alone: a third party (A or B) sees a transaction between BI and C, and C's validator holds the data.
    Real R1 needs the APS path, item (b): Atomic Private Settlement with commitments and an audit
@@ -101,7 +104,7 @@ restart) come next; the table is filled after them.
 
 | # | Check | Pass criterion | Result |
 |---|---|---|---|
-| 1 | Lane 1 commits from RD and DFABI transfers | On all four nodes lane 1 height grows by at least 2 and `lane1/ds1` shows served txs; lane 2 stays at 1 (expected) | **PENDING** |
+| 1 | Restricted-dataspace execution in ds1 from RD and DFABI transfers | Transfers and mints with `--scope dataspace:1` are `Applied` on all four nodes and balances move; `lane1/ds1` `tx_served` grows. `teu_lane_commit` lane height is NOT a pass criterion (see the lane-1 canary) | **PENDING** |
 | 2 | DvP A to B via Lensa | tx `Applied`; B DFABI +5 and RD moved by the opposite amount (`--scope dataspace:1`) | **PENDING** |
 | 3 | C gets 403 while the parties can read | bank-a, bank-b answer for the same query; bank-c answers HTTP 403 on `asset get` (and `transaction get`, if gated) | **PENDING** |
 | 4 | Lensa balance and health | `GET /api/balance?model=iroha3&party=C` returns C's RD and DFABI via `op-bank-c`; `GET /api/health` ready | **PENDING** |
@@ -113,3 +116,84 @@ claim.
 If the grants did not take effect (check 3 returns data for C), the fallback is a second genesis
 iteration. If lane 1 does not commit, rollback restores the Global-asset network `ea8b5dff` from the
 backup (chain history is gone either way).
+
+### Lane-1 canary (2026-11-06)
+
+Canary after the frontend bootstrap: mint 1 RD to BI with scope `dataspace:1`, tx
+`1f48a65eb1b96d37af8c3c07857436b545b0fd773030c58c7bbdcb61a16cb00b`, result `Applied`.
+
+`GET /status` on all four nodes, before and after the mint:
+
+| Field | Before | After |
+|---|---|---|
+| `blocks` | 4 | 7 |
+| `teu_lane_commit` (`lane_id`: `block_height`) | - | `{0:7, 1:1, 2:1}`; the lane-1 value did not change |
+| `teu_dataspace_backlog` lane 1 / ds 1 `tx_served` | - | 3 (rose) |
+
+Question: does the lane-1 height of 1 mean the lane-1 pipeline is idle? Source reading at `071e281e`,
+paths under `crates/`:
+
+1. **What `teu_lane_commit.block_height` is.** `teu_lane_commit` is the cache
+   `nexus_scheduler_lane_teu_status`, one `NexusLaneTeuStatus` per lane (`iroha_telemetry/src/metrics.rs:1375-1383`).
+   The field is documented "Latest block height recorded for this lane"
+   (`iroha_torii_shared/src/status/nexus.rs:314`).
+2. **What writes it.** Three writers, none of them a per-lane block counter:
+   - `StateTelemetry::record_lane_pipeline_summary` (`iroha_core/src/telemetry.rs:2643-2654`), called once
+     per lane that has a routed tx in the block (an empty block falls back to the default lane) from
+     `ValidBlock::validate_and_record_transactions_with_prepared` (`iroha_core/src/block.rs:15474-15528`).
+     The value is the **global** height: `state_block._curr_block.height()` (`block.rs:15481`).
+   - `record_lane_relay_finality` (`telemetry.rs:2704-2727`), called from `State::publish_prevalidated_lane_relay`
+     (`iroha_core/src/state.rs:34122`) with `relay_proposal_height = envelope.block_header.height()`
+     (`state.rs:33979`). The relay is built from the **global** block header
+     (`iroha_core/src/sumeragi/v2_apply.rs:3961-3991`).
+   - The seed: when the lane metadata cache is first built, a zero height is set to the global height at that
+     moment (`telemetry.rs:929-931`). This is where the `1` of lanes 1 and 2 comes from (genesis height).
+3. **How a restricted-dataspace tx commits.** It is an external entrypoint of the **global** block, and it
+   is executed in the global `StateBlock` (`iroha_core/src/sumeragi/v2_candidate.rs:952-962` builds the
+   block with its `execution_context`; execution is `block.rs:12016`, `validate_and_record_transactions_with_prepared`).
+   The route (lane, dataspace) comes from `RoutingDecision`; a mint of a `DataspaceRestricted` asset routes to
+   the asset's home dataspace (`iroha_core/src/queue/router.rs:3666-3680`,
+   `asset_balance_operation_dataspace_target`). Lane-local blocks do exist as a separate artifact
+   (`iroha_core/src/sumeragi/lane_planner.rs:2607-2620`, `prepare_v2_lane_payload_plan`; lane height is the
+   lane tip plus one, `lane_planner.rs:1573`), but they are anchored by the global block, not committed
+   instead of it: "A certified lane session is persisted only after a canonical global block anchors the
+   exact ownership" (`iroha_core/src/sumeragi/v2_lane_work.rs:1-8`). Their real heights are in
+   `GET /v1/sumeragi/status`, `committed_lane_blocks[].lane_block_height`
+   (`iroha_torii/src/routing.rs:47880`, `iroha_core/src/sumeragi/status.rs:4863-4877`), not in `/status`.
+4. **What `tx_served` counts.** "Cumulative transactions executed for this dataspace since node start"
+   (`iroha_torii_shared/src/status/nexus.rs:561-562`). It adds the number of txs per (lane, dataspace)
+   route in each block this node executes (`block.rs:13797-13803`, `13883-13890`;
+   `telemetry.rs:2771-2783`). It counts executions on this node, not commits, and resets on restart.
+
+**Conclusion: A.** Restricted-lane txs execute inside global blocks. `teu_lane_commit.block_height` is not
+a lane-local block counter. It is the global height of the last block in which the lane had a routed tx or a
+relayed finality statement, seeded to the global height at lane-metadata init. The lane-1 pipeline is not
+shown to be idle or broken by this number.
+
+One point the source reading does not explain: `record_lane_pipeline_summary` and the `tx_served` update
+sit in the same function and both key off the same routing decisions (`block.rs:13797-13803` vs
+`15474-15528`), so a block that executes a lane-1 route should also move the lane-1 height. A lane-1 height
+of 1 with `tx_served` 3 fits only if the 3 counted txs were genesis txs (height 1). That reading does not
+match the report that `tx_served` rose during the canary. The suggested check below settles it.
+
+Suggested read-only check (not run): `GET /v1/sumeragi/status` on one node, fields
+`committed_lane_blocks[]` (`lane_id`, `dataspace_id`, `lane_block_height`) and `lane_payload_ownerships[]`.
+Lane-1 entries with a height of 1 or more, anchored at global heights 5 to 7, mean lane-1 work is real
+and `teu_lane_commit` simply does not report it. No lane-1 entries at all would mean the mint was
+routed to lane 0 (universal) and the stale `1` is correct.
+
+**Consequence for (a).** The goal of (a) is restricted-dataspace execution in ds1: RD and DFABI txs with
+`--scope dataspace:1` execute, move balances, and are visible only to holders of the dataspace grant. The
+goal is not "lane 1 produces its own blocks". No further wipe is planned for it.
+
+Canary read results (BI's mint, read by A and C):
+
+- A and C both got HTTP 403 `query_validation_failed` "exact `CanReadAccountData` permission is required to
+  read account <BI>" when reading BI's balance. This is the account-level rule, not the dataspace gate.
+- `tx get` by hash of BI's tx gave HTTP 403 `query_validation_failed` "transaction-details" for both A and C.
+- C's read of its own ds1 asset returned `query_validation_failed` "Failed to find asset ...#dataspace:1"
+  (not found, no balance yet), not a 403.
+
+Because of this, the dataspace-grant evidence (success check 3) is deferred to the post-bootstrap A to B
+rd-transfer: A and B read the tx; C reads the tx and A's balance (expect 403); C reads its own balance.
+The exact codes will be recorded then.
