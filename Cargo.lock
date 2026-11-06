@@ -4038,6 +4038,7 @@ dependencies = [
  "iroha_core",
  "iroha_crypto",
  "iroha_data_model",
+ "iroha_model_base",
  "norito",
  "schemars",
  "serde",

@@ -6,10 +6,17 @@
 mod api;
 mod backend;
 mod cmds;
+mod probe;
 mod store;
 mod tree;
 #[cfg(feature = "aps")]
 mod aps;
+
+// The crypto behind `Backend`: upstream calls in the aps build, "needs --features aps" errors in the light one.
+#[cfg(feature = "aps")]
+use aps::ApsBackend as Be;
+#[cfg(not(feature = "aps"))]
+use backend::NoAps as Be;
 
 use std::{io::Read, path::PathBuf, process::ExitCode};
 
@@ -59,6 +66,9 @@ enum Cmd {
     Auditor(AuditorCmd),
     /// Chain readiness: height, privacy capability, APS activation, committee keys.
     Doctor,
+    /// Offline builders for one-shot live probes (no network, no key store).
+    #[command(subcommand)]
+    Probe(ProbeCmd),
     /// Print the JSON schemas of every command (optionally write them to DIR).
     Schema {
         #[arg(long)]
@@ -80,6 +90,12 @@ enum CapsuleCmd {
 #[derive(Subcommand)]
 enum NoteCmd {
     Decrypt,
+}
+#[derive(Subcommand)]
+enum ProbeCmd {
+    /// Build the availability-share request body that tests committee-role keys on the peers' own BLS keys.
+    /// Material JSON goes to stdout, the command to run and the verdict table to stderr. Errors: JSON envelope on stdout, exit 3.
+    AvailabilityShareMaterial(probe::AvailabilityShareArgs),
 }
 #[derive(Subcommand)]
 enum AuditorCmd {
@@ -155,11 +171,11 @@ fn dispatch(cli: &Cli) -> (String, u8) {
     match &cli.cmd {
         Cmd::Keys(KeysCmd::Init) => call(cli, "keys init", |c, q: KeysInitReq| {
             let seed = store::random32().map_err(internal)?;
-            cmds::keys_init(&open_store(c)?, &backend::NoAps, q, seed)
+            cmds::keys_init(&open_store(c)?, &Be, q, seed)
         }),
         Cmd::Pool(PoolCmd::Activate) => call(cli, "pool activate", |c, q: PoolActivateReq| {
             let store = open_store(c)?;
-            cmds::pool_activate(&store, &backend::NoAps, &q, || store::random32().expect("urandom"))
+            cmds::pool_activate(&store, &Be, &q, || store::random32().expect("urandom"))
         }),
         Cmd::Dvp => call(cli, "dvp", |_, _: DvpReq| not_implemented::<DvpResp>("dvp")),
         Cmd::Status => call(cli, "status", |_, _: BundleReq| not_implemented::<StatusResp>("status")),
@@ -170,6 +186,10 @@ fn dispatch(cli: &Cli) -> (String, u8) {
         Cmd::Auditor(AuditorCmd::Approve) => call(cli, "auditor approve", |_, _: AuditorApproveReq| not_implemented::<AuditorApproveResp>("auditor approve")),
         Cmd::Auditor(AuditorCmd::Run) => envelope::<()>(not_implemented("auditor run")),
         Cmd::Doctor => call(cli, "doctor", |c, _: DoctorReq| cmds::doctor(&open_store(c)?)),
+        Cmd::Probe(ProbeCmd::AvailabilityShareMaterial(args)) => match probe::run(args) {
+            Ok(material) => (material, 0),
+            Err(e) => envelope::<()>(Err(e)),
+        },
         Cmd::Schema { out } => {
             let all = schemas();
             if let Some(dir) = out {

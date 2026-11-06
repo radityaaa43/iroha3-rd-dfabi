@@ -13,7 +13,7 @@ path = "src/main.rs"
 [features]
 # Default build is the CLI/JSON contract only (seconds to compile, no iroha). CI builds `--features aps`.
 default = []
-aps = ["dep:iroha", "dep:iroha_core", "dep:iroha_data_model", "dep:iroha_crypto", "dep:norito"]
+aps = ["dep:iroha", "dep:iroha_core", "dep:iroha_data_model", "dep:iroha_crypto", "dep:iroha_model_base", "dep:norito"]
 
 [dependencies]
 anyhow = "1"
@@ -31,4 +31,6 @@ iroha = { path = "../../.iroha-src/crates/iroha", optional = true }
 iroha_core = { path = "../../.iroha-src/crates/iroha_core", optional = true, default-features = false, features = ["node", "zk-stark"] }
 iroha_data_model = { path = "../../.iroha-src/crates/iroha_data_model", optional = true, default-features = false, features = ["application-model", "http", "transparent_api"] }
 iroha_crypto = { path = "../../.iroha-src/crates/iroha_crypto", optional = true, default-features = false, features = ["node-crypto"] }
+# PeerId, DataSpaceId, LaneId live here; the upstream integration test imports them from this crate too.
+iroha_model_base = { path = "../../.iroha-src/crates/iroha_model_base", optional = true, default-features = false }
 norito = { path = "../../.iroha-src/crates/norito", optional = true, default-features = false, features = ["node-codec"] }
