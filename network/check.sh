@@ -131,6 +131,11 @@ assert [l["visibility"] for l in lanes] == ["public", "restricted", "restricted"
 # genesis.json records the mode as "consensus_mode": "Npos" / "Permissioned".
 check "$OUT/genesis/genesis.json: consensus_mode is Npos (required by a custom lane catalog)" \
   jq -e '.consensus_mode == "Npos"' "$OUT/genesis/genesis.json"
+# A genesis gas-accepted-assets parameter without node-config accepted_assets makes Torii quote
+# a Nexus fee only while execution also requires a PipelineGas limit: every tx is Rejected.
+check "genesis.json has no ivm_gas_accepted_assets unless peer.toml [pipeline.gas] sets accepted_assets" \
+  bash -c 'jq -e "[.transactions[].parameters.custom // {} | has(\"ivm_gas_accepted_assets\")] | any | not" "$1" >/dev/null || grep -q "^accepted_assets" "${@:2}"' _ \
+    "$OUT/genesis/genesis.json" "$OUT"/*/peer.toml
 fi
 
 # --- real-binary validation (verifies the #XXXX address checksums too) -------

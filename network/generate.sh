@@ -284,6 +284,11 @@ PY
       | select(.lane_id == 0)]) as $v
     | if ($v | length) != 4 then error("expected 4 lane-0 validators, found \($v | length)") else . end
     | if any(.transactions[].instructions[] | objects; .Register.AssetDefinition.id == $stake) then . else error("stake asset \($stake) is not registered in genesis") end
+    # kagami npos localnet writes ivm_gas_accepted_assets / ivm_gas_units_per_gas into genesis, but its
+    # peer.toml [pipeline.gas] has only tech_account_id. Torii then quotes a Nexus fee only, while
+    # execution (executor.rs) requires a PipelineGas limit too and rejects every tx. The upstream
+    # APS test genesis has neither parameter; drop them so gas stays off.
+    | .transactions |= map(if .parameters.custom then del(.parameters.custom.ivm_gas_accepted_assets, .parameters.custom.ivm_gas_units_per_gas) else . end)
     | .transactions += [{instructions: [
         $lanes[] as $lane | $v[] | (
           {Mint: {Asset: {destination: ($stake + "#" + .validator), object: .initial_stake}}},
