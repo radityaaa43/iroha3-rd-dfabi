@@ -138,7 +138,8 @@ changes the lane-author rule; `block_cadence_ms` only scales the global timeouts
 ## Open
 
 G1 is not met, and the cause is an upstream design property of the autonomous lane at
-071e281e, not a deployment error. Plan 02 must not start on this topology. Any alternative
+071e281e, not a deployment error. Resolved 2026-11-06 by accepting R2 as exempt for the
+APS track (see "R2 verdict" below), so Plan 02 may proceed on this topology. Any alternative
 (e.g. more validators so that `3f+1` live peers remain without BI) needs a localnet gate first;
 there is no official example of it.
 
