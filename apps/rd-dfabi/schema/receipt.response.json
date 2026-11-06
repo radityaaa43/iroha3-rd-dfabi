@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "description": "not_implemented | bad_request | no_such_wallet | insufficient_notes | aps_not_active | pool_busy | audit_rejected | audit_timeout | committee_unreachable | prove_failed | chain_rejected | internal",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "description": "true when the same request can be retried unchanged (pool_busy, committee_unreachable, audit_timeout).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "PublicLeg": {
+      "properties": {
+        "new_root": {
+          "type": "string"
+        },
+        "nullifiers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "old_root": {
+          "type": "string"
+        },
+        "ordinal": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "output_commitments": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pool_id": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/definitions/Route"
+        }
+      },
+      "required": [
+        "new_root",
+        "nullifiers",
+        "old_root",
+        "ordinal",
+        "output_commitments",
+        "pool_id",
+        "route"
+      ],
+      "type": "object"
+    },
+    "Route": {
+      "properties": {
+        "dataspace": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "incarnation": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "lane": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dataspace",
+        "incarnation",
+        "lane"
+      ],
+      "type": "object"
+    },
+    "StatusResp": {
+      "description": "Only what a non-party validator can see; no amounts, no accounts, no asset ids.",
+      "properties": {
+        "block": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "finalize_tx": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "legs": {
+          "items": {
+            "$ref": "#/definitions/PublicLeg"
+          },
+          "type": "array"
+        },
+        "lifecycle": {
+          "description": "collecting | audited | prepared | committed | aborted | expired | unknown",
+          "type": "string"
+        },
+        "sponsor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "legs",
+        "lifecycle",
+        "sponsor"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Exactly one of `data` / `error` is set; `ok` says which.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/StatusResp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "title": "Envelope_for_StatusResp",
+  "type": "object"
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One NDJSON line on stderr while a long command runs; the adapter turns these into StepEvents.",
+  "properties": {
+    "leg": {
+      "description": "Leg ordinal (0 = ds-rd, 1 = ds-dfabi) when the phase is per leg.",
+      "format": "uint8",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "phase": {
+      "description": "prove | availability | upload | audit | prepare | register | commit | finalize | activate",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ms",
+    "phase"
+  ],
+  "title": "Progress",
+  "type": "object"
+}

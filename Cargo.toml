@@ -1,0 +1,27 @@
+# Workspace for the RD/DFABI driver. Source of truth for the Lensa APS helper.
+#
+# Iroha is consumed as PATH dependencies on a checkout of upstream 071e281e in ./.iroha-src
+# (scripts/fetch-iroha.sh; gitignored; CI does the same). A cargo `git =` dependency does NOT work: the
+# upstream repo carries a submodule `iroha-docs` without a URL and cargo aborts with
+# "no URL configured for submodule 'iroha-docs'" (observed 2026-11-06). The node build avoids it the same way
+# (git init + fetch --depth 1 + checkout, no submodules).
+[workspace]
+resolver = "3"
+members = ["apps/rd-dfabi"]
+# Without this, path deps living under the workspace dir would become members and lose upstream's
+# `workspace = true` inheritance.
+exclude = [".iroha-src"]
+
+# Upstream's root [patch] sections are not inherited by a dependent workspace ($S/Cargo.toml:185-197).
+[patch.crates-io]
+halo2-axiom = { path = ".iroha-src/vendor/halo2-axiom" }
+halo2curves-axiom = { path = ".iroha-src/vendor/halo2curves-axiom" }
+find_cuda_helper = { path = ".iroha-src/vendor/find_cuda_helper" }
+wayland-scanner = { path = ".iroha-src/vendor/wayland-scanner-0.31.10" }
+
+[patch."https://github.com/axiom-crypto/halo2-lib.git"]
+halo2-base = { path = ".iroha-src/vendor/halo2-base" }
+
+[profile.release]
+opt-level = 3
+debug = 0

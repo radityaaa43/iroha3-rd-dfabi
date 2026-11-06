@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Asset": {
+      "enum": [
+        "RD",
+        "DFABI"
+      ],
+      "type": "string"
+    },
+    "AuditLeg": {
+      "properties": {
+        "amount": {
+          "type": "string"
+        },
+        "asset": {
+          "$ref": "#/definitions/Asset"
+        },
+        "memo": {
+          "type": "string"
+        },
+        "ordinal": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "payer": {
+          "description": "Canonical account ids from PrivateSettlementAuditPlaintextV1.",
+          "type": "string"
+        },
+        "recipient": {
+          "type": "string"
+        },
+        "sponsor": {
+          "type": "string"
+        },
+        "sponsor_reimbursement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "asset",
+        "memo",
+        "ordinal",
+        "payer",
+        "recipient",
+        "sponsor",
+        "sponsor_reimbursement"
+      ],
+      "type": "object"
+    },
+    "CapsuleOpenResp": {
+      "properties": {
+        "bundle_id": {
+          "type": "string"
+        },
+        "legs": {
+          "items": {
+            "$ref": "#/definitions/AuditLeg"
+          },
+          "type": "array"
+        },
+        "source": {
+          "description": "audit_store (plaintext kept at approval) | capsule (re-fetched from the committee and opened now)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bundle_id",
+        "legs",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "description": "not_implemented | bad_request | no_such_wallet | insufficient_notes | aps_not_active | pool_busy | audit_rejected | audit_timeout | committee_unreachable | prove_failed | chain_rejected | internal",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "description": "true when the same request can be retried unchanged (pool_busy, committee_unreachable, audit_timeout).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Exactly one of `data` / `error` is set; `ok` says which.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CapsuleOpenResp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "title": "Envelope_for_CapsuleOpenResp",
+  "type": "object"
+}

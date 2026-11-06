@@ -1,0 +1,31 @@
+[package]
+name = "rd-dfabi"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+description = "RD/DFABI APS helper: private DvP, pool activation, BI audit and party views for the Lensa frontend"
+
+[[bin]]
+name = "rd-dfabi"
+path = "src/main.rs"
+
+[features]
+# Default build is the CLI/JSON contract only (seconds to compile, no iroha). CI builds `--features aps`.
+default = []
+aps = ["dep:iroha", "dep:iroha_core", "dep:iroha_data_model", "dep:iroha_crypto", "dep:norito"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Same feature sets as upstream integration_tests/Cargo.toml:94-125, the only combination known to build.
+# Minimising iroha_core features (drop `node`) is milestone M0.
+iroha = { path = "../../.iroha-src/crates/iroha", optional = true }
+iroha_core = { path = "../../.iroha-src/crates/iroha_core", optional = true, default-features = false, features = ["node", "zk-stark"] }
+iroha_data_model = { path = "../../.iroha-src/crates/iroha_data_model", optional = true, default-features = false, features = ["application-model", "http", "transparent_api"] }
+iroha_crypto = { path = "../../.iroha-src/crates/iroha_crypto", optional = true, default-features = false, features = ["node-crypto"] }
+norito = { path = "../../.iroha-src/crates/norito", optional = true, default-features = false, features = ["node-codec"] }

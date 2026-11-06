@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "DvpResp": {
+      "properties": {
+        "authority_context_height": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "block": {
+          "description": "Block of the finalize carrier.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "bundle_id": {
+          "type": "string"
+        },
+        "finalize_tx": {
+          "type": "string"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/definitions/PhaseTiming"
+          },
+          "type": "array"
+        },
+        "prepare_tx": {
+          "description": "Lane-0 carrier txs (RegisterAtomicPrivateSettlementPrepareV1, FinalizeAtomicPrivateSettlementV1).",
+          "type": "string"
+        },
+        "total_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "authority_context_height",
+        "block",
+        "bundle_id",
+        "finalize_tx",
+        "phases",
+        "prepare_tx",
+        "total_ms"
+      ],
+      "type": "object"
+    },
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "description": "not_implemented | bad_request | no_such_wallet | insufficient_notes | aps_not_active | pool_busy | audit_rejected | audit_timeout | committee_unreachable | prove_failed | chain_rejected | internal",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "description": "true when the same request can be retried unchanged (pool_busy, committee_unreachable, audit_timeout).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "PhaseTiming": {
+      "properties": {
+        "leg": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ms",
+        "phase"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Exactly one of `data` / `error` is set; `ok` says which.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/DvpResp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "title": "Envelope_for_DvpResp",
+  "type": "object"
+}

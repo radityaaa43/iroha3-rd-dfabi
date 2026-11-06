@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Asset": {
+      "enum": [
+        "RD",
+        "DFABI"
+      ],
+      "type": "string"
+    },
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "description": "not_implemented | bad_request | no_such_wallet | insufficient_notes | aps_not_active | pool_busy | audit_rejected | audit_timeout | committee_unreachable | prove_failed | chain_rejected | internal",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "description": "true when the same request can be retried unchanged (pool_busy, committee_unreachable, audit_timeout).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "PoolActivateResp": {
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "pools": {
+          "items": {
+            "$ref": "#/definitions/PoolInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dry_run",
+        "pools"
+      ],
+      "type": "object"
+    },
+    "PoolInfo": {
+      "properties": {
+        "asset": {
+          "$ref": "#/definitions/Asset"
+        },
+        "asset_binding_commitment": {
+          "description": "Opaque binding commitment of the asset definition (what the chain shows).",
+          "type": "string"
+        },
+        "block": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "notes": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "pool_id": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/definitions/Route"
+        },
+        "tx_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "asset",
+        "asset_binding_commitment",
+        "notes",
+        "pool_id",
+        "route"
+      ],
+      "type": "object"
+    },
+    "Route": {
+      "properties": {
+        "dataspace": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "incarnation": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "lane": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dataspace",
+        "incarnation",
+        "lane"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Exactly one of `data` / `error` is set; `ok` says which.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PoolActivateResp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "title": "Envelope_for_PoolActivateResp",
+  "type": "object"
+}

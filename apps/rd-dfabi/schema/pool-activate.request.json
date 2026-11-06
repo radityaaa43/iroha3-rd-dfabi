@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Asset": {
+      "enum": [
+        "RD",
+        "DFABI"
+      ],
+      "type": "string"
+    },
+    "Party": {
+      "description": "Frontend party ids (frontend/server/src/domain.ts PartyId).",
+      "enum": [
+        "BI",
+        "A",
+        "B",
+        "C"
+      ],
+      "type": "string"
+    },
+    "PoolHolder": {
+      "properties": {
+        "notes": {
+          "description": "One initial note per entry (1..=4096 per pool in total). Value of each note.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "party": {
+          "$ref": "#/definitions/Party"
+        }
+      },
+      "required": [
+        "notes",
+        "party"
+      ],
+      "type": "object"
+    },
+    "PoolPlan": {
+      "properties": {
+        "asset": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Asset"
+            }
+          ],
+          "description": "RD is pooled in ds-rd (dataspace 1, lane 1), DFABI in ds-dfabi (dataspace 2, lane 2)."
+        },
+        "holders": {
+          "items": {
+            "$ref": "#/definitions/PoolHolder"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "asset",
+        "holders"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "dry_run": {
+      "default": false,
+      "description": "Build and print the plan (commitments count, pool ids) without submitting.",
+      "type": "boolean"
+    },
+    "governance_client_config": {
+      "description": "Client config of the account holding CanEnactGovernance (genesis account). Path only, read by the helper.",
+      "type": "string"
+    },
+    "plans": {
+      "items": {
+        "$ref": "#/definitions/PoolPlan"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "governance_client_config",
+    "plans"
+  ],
+  "title": "PoolActivateReq",
+  "type": "object"
+}

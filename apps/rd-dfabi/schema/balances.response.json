@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Asset": {
+      "enum": [
+        "RD",
+        "DFABI"
+      ],
+      "type": "string"
+    },
+    "Balance": {
+      "properties": {
+        "asset": {
+          "$ref": "#/definitions/Asset"
+        },
+        "largest_note": {
+          "type": "string"
+        },
+        "notes": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "party": {
+          "$ref": "#/definitions/Party"
+        },
+        "total": {
+          "description": "Sum of unspent confirmed notes only; pending notes never count.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset",
+        "largest_note",
+        "notes",
+        "party",
+        "total"
+      ],
+      "type": "object"
+    },
+    "BalancesResp": {
+      "properties": {
+        "balances": {
+          "items": {
+            "$ref": "#/definitions/Balance"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "balances"
+      ],
+      "type": "object"
+    },
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "description": "not_implemented | bad_request | no_such_wallet | insufficient_notes | aps_not_active | pool_busy | audit_rejected | audit_timeout | committee_unreachable | prove_failed | chain_rejected | internal",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "description": "true when the same request can be retried unchanged (pool_busy, committee_unreachable, audit_timeout).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "Party": {
+      "description": "Frontend party ids (frontend/server/src/domain.ts PartyId).",
+      "enum": [
+        "BI",
+        "A",
+        "B",
+        "C"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Exactly one of `data` / `error` is set; `ok` says which.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/BalancesResp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "title": "Envelope_for_BalancesResp",
+  "type": "object"
+}

@@ -21,3 +21,7 @@ wallets/
 
 # Local agent workspaces
 .superpowers/
+
+# Rust build output
+/target/
+.iroha-src/

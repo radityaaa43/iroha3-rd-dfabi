@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AuditDecision": {
+      "enum": [
+        "approve",
+        "reject"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "bundle_id": {
+      "description": "Approve one bundle. `auditor run` loops over all waiting bundles instead.",
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/definitions/AuditDecision"
+    }
+  },
+  "required": [
+    "bundle_id",
+    "decision"
+  ],
+  "title": "AuditorApproveReq",
+  "type": "object"
+}

@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "description": "not_implemented | bad_request | no_such_wallet | insufficient_notes | aps_not_active | pool_busy | audit_rejected | audit_timeout | committee_unreachable | prove_failed | chain_rejected | internal",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "description": "true when the same request can be retried unchanged (pool_busy, committee_unreachable, audit_timeout).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "KeysInitResp": {
+      "properties": {
+        "auditor_encryption_key": {
+          "description": "BI only: auditor hybrid (X25519 + ML-KEM-768) public key placed in the audit policy.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "party": {
+          "$ref": "#/definitions/Party"
+        },
+        "receive_authority": {
+          "description": "Spending authority = hash of the note spending secret (public).",
+          "type": "string"
+        },
+        "receive_view_key": {
+          "description": "X25519 view public key new notes are encrypted to (public).",
+          "type": "string"
+        },
+        "wallet_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "party",
+        "receive_authority",
+        "receive_view_key",
+        "wallet_dir"
+      ],
+      "type": "object"
+    },
+    "Party": {
+      "description": "Frontend party ids (frontend/server/src/domain.ts PartyId).",
+      "enum": [
+        "BI",
+        "A",
+        "B",
+        "C"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Exactly one of `data` / `error` is set; `ok` says which.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/KeysInitResp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "title": "Envelope_for_KeysInitResp",
+  "type": "object"
+}

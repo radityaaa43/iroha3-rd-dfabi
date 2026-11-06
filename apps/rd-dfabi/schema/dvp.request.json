@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AuditorMode": {
+      "oneOf": [
+        {
+          "description": "The helper plays the BI auditor in-process (PoC default on the Lensa host).",
+          "enum": [
+            "inline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An external `auditor run` (BI-side process) must approve; dvp waits for it.",
+          "enum": [
+            "external"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Party": {
+      "description": "Frontend party ids (frontend/server/src/domain.ts PartyId).",
+      "enum": [
+        "BI",
+        "A",
+        "B",
+        "C"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "auditor": {
+      "$ref": "#/definitions/AuditorMode"
+    },
+    "buyer": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Party"
+        }
+      ],
+      "description": "Pays RD (leg 0, ds-rd), receives DFABI."
+    },
+    "dfabi_amount": {
+      "type": "string"
+    },
+    "memo": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rd_amount": {
+      "type": "string"
+    },
+    "seller": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Party"
+        }
+      ],
+      "description": "Pays DFABI (leg 1, ds-dfabi), receives RD."
+    },
+    "sponsor": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Party"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Pays the public XOR fee for both carriers. Default BI."
+    },
+    "timeout_ms": {
+      "description": "Whole-run budget; the helper aborts the bundle cleanly when exceeded.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "auditor",
+    "buyer",
+    "dfabi_amount",
+    "rd_amount",
+    "seller"
+  ],
+  "title": "DvpReq",
+  "type": "object"
+}

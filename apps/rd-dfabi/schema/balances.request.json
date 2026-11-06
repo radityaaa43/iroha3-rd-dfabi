@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Party": {
+      "description": "Frontend party ids (frontend/server/src/domain.ts PartyId).",
+      "enum": [
+        "BI",
+        "A",
+        "B",
+        "C"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "party": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Party"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "All parties when omitted."
+    }
+  },
+  "title": "BalancesReq",
+  "type": "object"
+}
