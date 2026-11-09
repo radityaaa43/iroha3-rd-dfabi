@@ -30,6 +30,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
+        fsGroup: 1001   # Secret files (0400, root-owned) become group-readable for 1001
         seccompProfile:
           type: RuntimeDefault
       containers:
