@@ -94,7 +94,7 @@ jobs:
             s2a-insufficient) args=$(dvp --buyer bank-a --seller bank-b --rd 2000 --dfabi 10 --rd-funding 1000)
                               expect_log="insufficient payer note" ;;
             # Over the auditor's max_rd: no approval, sponsor aborts, nothing moves.
-            s2b-audit-reject) args=$(dvp --buyer bank-a --seller bank-b --rd 2000000 --dfabi 10 --rd-funding 3000000 --expect aborted)
+            s2b-audit-reject) args=$(dvp --buyer bank-a --seller bank-b --rd 20000000000 --dfabi 10 --rd-funding 30000000000 --expect aborted)
                               expect_log="outcome=aborted" ;;
             s3-replay) args=$(dvp --buyer bank-a --seller bank-b --rd 100 --dfabi 10 --replay); expect_log="outcome=finalized" ;;
             s4-redeem) args=$(dvp --buyer bi --seller bank-c --rd 200 --dfabi 20 --rd-funding 10000); expect_log="outcome=finalized" ;;
