@@ -1,0 +1,131 @@
+name: scenario
+# Plan 2 (APS) runs on the in-cluster runner. Image: ghcr.io/radityaaa43/iroha3-rd-driver,
+# built in the public repo radityaaa43/iroha3-rd-node-build (driver/).
+# Never writes Secrets (the runner cannot read or write them): wallet and auditor keys come
+# from scripts/keys-init.sh on the operator PC.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: what to run
+        type: choice
+        options: [selftest, auditor, s1-dvp, s2a-insufficient, s2b-audit-reject, s3-replay, s4-redeem]
+      tag:
+        description: driver image tag (8-char commit of iroha3-rd-node-build)
+        required: true
+      memory:
+        description: Job memory request = limit (set from the selftest peak RSS)
+        default: 3Gi
+concurrency: scenario
+permissions:
+  contents: read
+jobs:
+  run:
+    runs-on: [self-hosted, iroha3]
+    timeout-minutes: 75
+    env:
+      NS: iroha3
+      IMAGE: ghcr.io/radityaaa43/iroha3-rd-driver:${{ inputs.tag }}
+      TARGET: ${{ inputs.target }}
+      MEM: ${{ inputs.memory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Get kubectl v1.33.13
+        run: |
+          base=https://dl.k8s.io/release/v1.33.13/bin/linux/amd64
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP/bin"
+          curl -fsSLo kubectl "$base/kubectl"
+          echo "$(curl -fsSL "$base/kubectl.sha256")  kubectl" | sha256sum -c -
+          chmod +x kubectl
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Preconditions
+        run: |
+          [[ "${{ inputs.tag }}" =~ ^[0-9a-f]{8}$ ]] || { echo "tag must be 8 hex chars"; exit 1; }
+          [[ "$MEM" =~ ^[0-9]+(Mi|Gi)$ ]] || { echo "memory must look like 3Gi or 1536Mi"; exit 1; }
+          # Image is public and exists: otherwise the pod hangs in ImagePullBackOff.
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:radityaaa43/iroha3-rd-driver:pull" | sed -nE 's/.*"token":"([^"]+)".*/\1/p')
+          curl -fsS -o /dev/null -H "Authorization: Bearer $token" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/radityaaa43/iroha3-rd-driver/manifests/${{ inputs.tag }}" ||
+            { echo "image $IMAGE not pullable anonymously (package public?)"; exit 1; }
+          # Network must be the one this repo describes, all 4 validators Ready.
+          hash8=$(sed -nE 's/^ +iroha3-rd\/genesis: "([0-9a-f]{8})"$/\1/p' deploy/k8s/kustomization.yaml)
+          [[ $hash8 =~ ^[0-9a-f]{8}$ ]] || { echo "cannot read genesis label"; exit 1; }
+          for have in $(kubectl get sts -n $NS -l app.kubernetes.io/part-of=iroha3-rd \
+                          -o jsonpath='{range .items[*]}{.metadata.labels.iroha3-rd/genesis}{"\n"}{end}'); do
+            [[ $have == "$hash8" ]] || { echo "running genesis $have != $hash8"; exit 1; }
+          done
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/part-of=iroha3-rd -n $NS --timeout=2m
+          echo "GENESIS_CM=genesis-$hash8" >> "$GITHUB_ENV"
+      - name: Config
+        run: |
+          for cm in "rd-dfabi-config deploy/k8s-apps/rd-dfabi.toml" "rd-dfabi-peers network/public/peers.json"; do
+            set -- $cm
+            kubectl create configmap "$1" -n $NS --from-file="$2" --dry-run=client -o yaml |
+              kubectl label --local -f - app.kubernetes.io/part-of=iroha3-rd-driver -o yaml |
+              kubectl apply -n $NS -f -
+          done
+      - name: Deploy bi-auditor
+        if: inputs.target == 'auditor'
+        run: |
+          grep -q '^parties = \[\]' deploy/k8s-apps/rd-dfabi.toml &&
+            { echo "auditor.parties is empty: run scripts/keys-init.sh and commit the keys"; exit 1; }
+          sed -e "s|@IMAGE@|$IMAGE|" -e "s|@GENESIS_CM@|$GENESIS_CM|" deploy/k8s-apps/bi-auditor.yaml |
+            kubectl apply -n $NS -f -
+          # The ConfigMap may have changed under an unchanged pod spec.
+          kubectl rollout restart deploy/bi-auditor -n $NS
+          if ! kubectl rollout status deploy/bi-auditor -n $NS --timeout=5m; then
+            kubectl describe pod -n $NS -l app.kubernetes.io/name=bi-auditor | tail -30
+            exit 1
+          fi
+          kubectl logs -n $NS deploy/bi-auditor --tail=20
+      - name: Run scenario Job
+        if: inputs.target != 'auditor'
+        run: |
+          cfg=/config/rd-dfabi.toml
+          dvp() { printf '["dvp","%s"' "$cfg"; for a in "$@"; do printf ',"%s"' "$a"; done; printf ']'; }
+          expect_log=""
+          case "$TARGET" in
+            selftest) args='["prove-selftest","/peers/peers.json"]'; expect_log="prove-selftest ok" ;;
+            s1-dvp) args=$(dvp --buyer bank-a --seller bank-b --rd 100 --dfabi 10); expect_log="outcome=finalized" ;;
+            # Refused before proving and before any on-chain write: the Job must FAIL.
+            s2a-insufficient) args=$(dvp --buyer bank-a --seller bank-b --rd 2000 --dfabi 10 --rd-funding 1000)
+                              expect_log="insufficient payer note" ;;
+            # Over the auditor's max_rd: no approval, sponsor aborts, nothing moves.
+            s2b-audit-reject) args=$(dvp --buyer bank-a --seller bank-b --rd 2000000 --dfabi 10 --rd-funding 3000000 --expect aborted)
+                              expect_log="outcome=aborted" ;;
+            s3-replay) args=$(dvp --buyer bank-a --seller bank-b --rd 100 --dfabi 10 --replay); expect_log="outcome=finalized" ;;
+            s4-redeem) args=$(dvp --buyer bi --seller bank-c --rd 200 --dfabi 20 --rd-funding 10000); expect_log="outcome=finalized" ;;
+          esac
+          if [[ $TARGET != selftest ]]; then
+            kubectl get deploy/bi-auditor -n $NS >/dev/null || { echo "deploy bi-auditor first (target=auditor)"; exit 1; }
+          fi
+          name="rd-$TARGET"
+          kubectl delete job "$name" -n $NS --ignore-not-found --wait=true
+          sed -e "s|@NAME@|$name|g" -e "s|@IMAGE@|$IMAGE|" -e "s|@GENESIS_CM@|$GENESIS_CM|" \
+              -e "s|@MEM@|$MEM|g" -e "s|@ARGS@|$args|" deploy/jobs/scenario.yaml |
+            kubectl apply -n $NS -f -
+          # Wait for a terminal state; fail fast on pod errors that never finish by themselves.
+          status=""
+          for _ in $(seq 720); do
+            status=$(kubectl get job "$name" -n $NS -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}')
+            [[ $status == *Complete* || $status == *Failed* ]] && break
+            reason=$(kubectl get pod -n $NS -l job-name="$name" -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}')
+            case "$reason" in ImagePullBackOff|ErrImagePull|CreateContainerConfigError|InvalidImageName)
+              kubectl describe pod -n $NS -l job-name="$name" | tail -20; exit 1 ;; esac
+            kubectl top pod -n $NS -l job-name="$name" --no-headers 2>/dev/null | sed 's/^/usage: /' || true
+            sleep 5
+          done
+          echo "job status: $status"
+          kubectl get pod -n $NS -l job-name="$name" -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.reason}{"\n"}'
+          kubectl logs -n $NS job/"$name" --tail=200 | tee "$RUNNER_TEMP/job.log"
+          grep -qF "$expect_log" "$RUNNER_TEMP/job.log" || { echo "expected log line missing: $expect_log"; exit 1; }
+          if [[ $TARGET == s2a-insufficient ]]; then
+            [[ $status == *Failed* ]] || { echo "s2a must fail"; exit 1; }
+          else
+            [[ $status == *Complete* ]] || exit 1
+          fi
+      - if: always()
+        run: kubectl get pods,jobs,pvc -n $NS -l app.kubernetes.io/part-of=iroha3-rd-driver -o wide

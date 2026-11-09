@@ -1,0 +1,79 @@
+# One scenario run as a Job. .github/workflows/scenario.yml replaces @NAME@, @IMAGE@,
+# @ARGS@ (JSON list) and @GENESIS_CM@.
+#
+# backoffLimit 0: a retry would activate fresh pools and prove again (a new bundle, not a
+# resume), so a failure stops here and is inspected. No priorityClassName: priority 0 can
+# never preempt validators (iroha3-peer, 10000). requests = limits (Guaranteed QoS) so the
+# scheduler reserves the prover's memory up front instead of overcommitting a shared node.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "@NAME@"
+  labels:
+    app.kubernetes.io/part-of: iroha3-rd-driver
+    rd-dfabi/scenario: "@NAME@"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: iroha3-rd-driver
+        rd-dfabi/role: coordinator
+        rd-dfabi/scenario: "@NAME@"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rd-dfabi
+          image: "@IMAGE@"
+          args: @ARGS@
+          env:
+            # Prover worker threads = CPU limit, so it is not throttled into a crawl.
+            - { name: RAYON_NUM_THREADS, value: "2" }
+          resources:
+            requests: { cpu: "2", memory: "@MEM@" }
+            limits: { cpu: "2", memory: "@MEM@" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: peers, mountPath: /peers, readOnly: true }
+            - { name: genesis, mountPath: /genesis, readOnly: true }
+            - { name: client, mountPath: /client, readOnly: true }
+            - { name: wallets, mountPath: /keys, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: rd-dfabi-config }
+        - name: peers
+          configMap: { name: rd-dfabi-peers }
+        - name: genesis
+          configMap: { name: "@GENESIS_CM@" }
+        # Operator account (sponsor: CanEnactGovernance, fee asset). Same Secret the peers'
+        # tooling already uses; never mounted into bi-auditor.
+        - name: client
+          secret:
+            secretName: client-bi
+            defaultMode: 0400
+        # Optional so prove-selftest runs before scripts/keys-init.sh; a dvp without it
+        # fails at once with "read /keys/<party>.seed".
+        - name: wallets
+          secret:
+            secretName: rd-dfabi-wallets
+            defaultMode: 0400
+            optional: true
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
