@@ -28,7 +28,7 @@ dfabi = 2
 [auditor]
 listen = "0.0.0.0:8090"
 store_dir = "/audit-store"
-max_rd = 1000000
+max_rd = 10000000000   # = max_dfabi x 10^6: Lensa prices one DFABI at 10^6 RD
 max_dfabi = 10000
 # Wallet public keys of bi, bank-a, bank-b, bank-c, printed by scripts/keys-init.sh.
 parties = [
