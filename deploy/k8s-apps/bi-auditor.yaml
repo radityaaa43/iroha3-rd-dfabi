@@ -11,6 +11,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: iroha3-rd-driver
 spec:
+  storageClassName: alicloud-essd-wffc   # cluster has no default StorageClass
   accessModes: [ReadWriteOnce]
   resources:
     requests:
