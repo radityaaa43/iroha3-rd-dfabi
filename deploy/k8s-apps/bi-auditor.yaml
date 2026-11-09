@@ -1,0 +1,125 @@
+# BI auditor (plan 2 Task 4). Separate from validator bi-0 (O2: the node may be down while
+# the auditor approves). Applied by .github/workflows/scenario.yml (target=auditor), which
+# replaces @IMAGE@ and @GENESIS_CM@.
+#
+# Label part-of=iroha3-rd-driver on purpose: iroha3-rd is the validator selector used by the
+# peers' NetworkPolicy and by deploy.yml's "4 Ready peers" check.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bi-audit-store
+  labels:
+    app.kubernetes.io/part-of: iroha3-rd-driver
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bi-auditor
+  labels:
+    app.kubernetes.io/part-of: iroha3-rd-driver
+    app.kubernetes.io/name: bi-auditor
+spec:
+  replicas: 1
+  # RWO volume and one approver at a time: never two pods.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bi-auditor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: iroha3-rd-driver
+        app.kubernetes.io/name: bi-auditor
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: auditor
+          image: "@IMAGE@"
+          args: [auditor, /config/rd-dfabi.toml]
+          ports:
+            - containerPort: 8090
+              name: http
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          # Decrypt + sign only: small. Limits keep it from crowding the shared nodes.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: peers, mountPath: /peers, readOnly: true }
+            - { name: genesis, mountPath: /genesis, readOnly: true }
+            - { name: key, mountPath: /keys, readOnly: true }
+            - { name: store, mountPath: /audit-store }
+      volumes:
+        - name: config
+          configMap: { name: rd-dfabi-config }
+        - name: peers
+          configMap: { name: rd-dfabi-peers }
+        - name: genesis
+          configMap: { name: "@GENESIS_CM@" }
+        - name: key
+          secret:
+            secretName: bi-auditor-key
+            defaultMode: 0400
+        - name: store
+          persistentVolumeClaim: { claimName: bi-audit-store }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bi-auditor
+  labels:
+    app.kubernetes.io/part-of: iroha3-rd-driver
+spec:
+  selector:
+    app.kubernetes.io/name: bi-auditor
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+# Only scenario Jobs (role coordinator) may call the auditor.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bi-auditor
+  labels:
+    app.kubernetes.io/part-of: iroha3-rd-driver
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bi-auditor
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              rd-dfabi/role: coordinator
+      ports:
+        - port: 8090

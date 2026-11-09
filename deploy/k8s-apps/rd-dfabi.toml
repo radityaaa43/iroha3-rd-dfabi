@@ -1,0 +1,34 @@
+# rd-dfabi config, shared by bi-auditor and the scenario Jobs (ConfigMap rd-dfabi-config).
+# Public values only. Keys come from Secrets: rd-dfabi-wallets (Jobs), bi-auditor-key
+# (auditor), client-bi (Jobs: operator/sponsor client.toml).
+chain = "851464f5-af06-4311-8cb5-455cf74d0428"
+network_id_file = "/genesis/genesis.expected_hash"
+account_domain = "wonderland.universal"
+client_toml = "/client/client.toml"
+peers_json = "/peers/peers.json"
+key_dir = "/keys"
+fee_asset = "6TEAJqbb8oEPmLncoNiMRbLEK6tw"
+auditor_url = "bi-auditor:8090"
+
+[torii]
+bi = "http://bi-0.bi.iroha3.svc.cluster.local:8080/"
+bank-a = "http://bank-a-0.bank-a.iroha3.svc.cluster.local:8080/"
+bank-b = "http://bank-b-0.bank-b.iroha3.svc.cluster.local:8080/"
+bank-c = "http://bank-c-0.bank-c.iroha3.svc.cluster.local:8080/"
+
+[assets]
+rd = "7onbjg2gRXveoAAUFsohCZyGW98t"
+dfabi = "4mBWK1JCwQdHLDPpuVKc56eLsXka"
+
+# lane id = dataspace id (network/nexus.toml): ds-rd 1, ds-dfabi 2
+[lanes]
+rd = 1
+dfabi = 2
+
+[auditor]
+listen = "0.0.0.0:8090"
+store_dir = "/audit-store"
+max_rd = 1000000
+max_dfabi = 10000
+# Wallet public keys of bi, bank-a, bank-b, bank-c, printed by scripts/keys-init.sh.
+parties = []

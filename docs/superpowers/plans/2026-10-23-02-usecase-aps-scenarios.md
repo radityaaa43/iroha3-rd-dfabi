@@ -11,6 +11,35 @@
 **Spec:** `docs/superpowers/specs/2026-10-23-iroha3-aps-rd-dfabi-design.md`
 **Prasyarat:** `docs/superpowers/plans/2026-10-23-01-network-setup.md` selesai sampai gate G1b PASS.
 
+## Revisi 2026-11-09 (disetujui user, item (b))
+
+Kajian kode upstream @ `071e281e` mengubah bentuk Task 2–9. Yang berlaku sekarang:
+
+- **Tanpa wipe.** Aktivasi pool adalah transaksi runtime biasa (butuh `CanEnactGovernance`, dipegang
+  akun operator). Pool tidak memeriksa aset: id aset hanya commitment yang dibuka auditor. DFABI tetap
+  aset genesis yang sama, legnya jalan di lane/dataspace 2.
+- **Satu pool baru per leg.** Wallet upstream hanya punya Merkle path untuk pool yang baru diaktifkan dengan
+  tepat 2 note (`wallet.rs:750-760`). Jadi setiap DvP mengaktifkan 2 pool tepat sebelum proving; note asal
+  di pool itu adalah "penerbitan" ke payer. Saldo publik RD/DFABI tidak bergerak. `NoteStore` (Task 3)
+  dan saldo wallet antar-skenario tidak dibuat: note hasil terima tidak bisa dibelanjakan ulang.
+- **Task 2 sudah selesai di genesis** (capability `IrohaIvmPrivateNoteStarkV1` Active sejak height 1).
+- **S5 = FAIL (keterbatasan upstream)**: tidak ada API publik untuk Merkle path note generasi kedua.
+- **Auditor**: Torii tidak punya route "pending legs". `bi-auditor` menerima `POST /approve` (governance,
+  policy, payload digest) dari coordinator di dalam cluster (NetworkPolicy: hanya pod coordinator),
+  lalu sendiri mengambil capsule, mendekripsi, menilai aturan, dan submit approval.
+- **Build**: source driver dan workflow build ada di repo public `radityaaa43/iroha3-rd-node-build`
+  (`driver/`, GitHub-hosted runner, image `ghcr.io/radityaaa43/iroha3-rd-driver:<sha8>`). Repo ini hanya
+  berisi deploy: `deploy/k8s-apps/`, `deploy/jobs/scenario.yaml`, `.github/workflows/scenario.yml`,
+  `scripts/keys-init.sh`.
+- **Batas resource wajib**: build lokal lewat `driver/build.sh` (cgroup 10 GiB, 1 cargo job). Build tanpa
+  batas menjatuhkan VM operator dua kali (2026-11-09). Job prover: request = limit (Guaranteed QoS),
+  ukuran dari `prove-selftest` (peak RSS), tanpa priorityClass (tidak bisa preempt validator).
+- **Residual PoC**: seed wallet keempat party ada di satu Secret yang dipasang ke Job coordinator (bukan
+  wallet per bank); coordinator memakai akun operator bersama sebagai sponsor.
+
+Urutan jalan: `selftest` → `scripts/keys-init.sh` → `auditor` → `s1-dvp` → `s2a-insufficient` →
+`s2b-audit-reject` → `s3-replay` → `s4-redeem` (semua `gh workflow run scenario.yml -f target=...`).
+
 ## Global Constraints
 
 - Semua prasyarat Global Constraints plan setup berlaku.
