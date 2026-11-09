@@ -54,6 +54,7 @@ spec:
             - { name: genesis, mountPath: /genesis, readOnly: true }
             # subPath: a regular file; Iroha config loader rejects the Secret volume symlink.
             - { name: client, mountPath: /client/client.toml, subPath: client.toml, readOnly: true }
+            - { name: client, mountPath: /client/genesis.expected_hash, subPath: genesis.expected_hash, readOnly: true }
             - { name: wallets, mountPath: /keys, readOnly: true }
             - { name: tmp, mountPath: /tmp }
       volumes:
