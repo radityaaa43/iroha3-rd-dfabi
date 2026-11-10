@@ -70,6 +70,8 @@ spec:
               cpu: 2000m
               memory: 3Gi
           # /livez is process-only; /readyz includes consensus admission.
+          # timeoutSeconds 3 (default 1): under account-history reads (~5 s each in Torii) probes
+          # timed out on all four nodes (2026-11-10) while the process was healthy.
           startupProbe:
             httpGet:
               path: /livez
@@ -81,12 +83,14 @@ spec:
               path: /livez
               port: api
             periodSeconds: 10
+            timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /readyz
               port: api
             periodSeconds: 5
+            timeoutSeconds: 3
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
