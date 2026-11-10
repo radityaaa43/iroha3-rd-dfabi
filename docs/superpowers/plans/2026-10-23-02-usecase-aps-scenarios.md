@@ -13,6 +13,8 @@
 
 ## Revisi 2026-11-09 (disetujui user, item (b))
 
+Hasil: `reports/b-aps.md` (s1-s4 PASS di cluster, Lensa DvP/award privat).
+
 Kajian kode upstream @ `071e281e` mengubah bentuk Task 2–9. Yang berlaku sekarang:
 
 - **Tanpa wipe.** Aktivasi pool adalah transaksi runtime biasa (butuh `CanEnactGovernance`, dipegang
