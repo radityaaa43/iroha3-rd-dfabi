@@ -108,3 +108,20 @@ BI→C 3 000 000 RD.
   production-qualified" upstream.
 - About 90 s per flow (two STARK proofs, ~1.1 GiB each); bundles in one pool are serial.
 - The stress test still uses public balances.
+
+## Risks (review 2026-11-10)
+
+- **Note fragmentation.** A leg spends one live note (input 1 is a virtual dummy), so a payer needs one
+  note larger than amount + 1 even when the summed balance is enough. Every received payment adds one
+  note; nothing merges them. Seen once in the browser run (dfabi-transfer, 1 of 6 flows). There is no
+  consolidate command; the workaround is a BI top-up. Option for later: spend two live notes in one leg
+  (the relation has two input slots) or a self-payment that merges two notes.
+- **Wallet reads next to a proof.** `walletOf` spawns one driver container per party (cap 2 GiB / 2 CPU,
+  not serialized with the prover). Not measured under a concurrent pay. Observed: wallet 0-1 s with the
+  receipt cache, `/api/balance` 1-319 ms; Lensa caches wallets and clears them only after a flow ends, so
+  during a proof the UI reads the cache. Worst case after a restart: 4 wallet containers + 1 prover (peak
+  ~1.1 GiB) on a host with ~7 GiB available.
+- **Lensa journal.** `<pools>/lensa-journal.json` (0600, outside every repo) holds flow, parties and
+  amount per bundle for the counterparty column. It is read only by the iroha3 adapter, served by no
+  route, and only consulted for bundles where the party holds a note.
+
