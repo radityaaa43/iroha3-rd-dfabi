@@ -78,6 +78,14 @@ Wallets read from the chain afterwards, equal to the hand calculation (each RD-l
 sponsor 1): A RD 1 000 699 / DFABI 2, B 2 000 198 / 3, C 1 000 099 / 1,
 BI 999 999 995 998 995 / 999 994.
 
+## Lensa (browser, `web/playwright.flows.config.ts`)
+
+iroha3 6/6 pass: rd-issue, rd-transfer, dfabi-issue in the first run (4.7 min); dfabi-transfer, dvp, award
+after a top-up (5.1 min). Outsider column `sealed` for every flow; parties and BI `clear`/`reported`.
+The first dfabi-transfer A→B 2 was refused before proving, as designed: A held one DFABI note of 2 and a
+leg needs change >= 1 ("Saldo DFABI Bank Mandala tidak cukup di satu note privat"). Top-up: BI→A 10 DFABI,
+BI→C 3 000 000 RD.
+
 ## Faults found and fixed
 
 1. A leg's three outputs need distinct view keys (`validate_output_authorizations`); a bundle's
