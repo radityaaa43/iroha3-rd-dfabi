@@ -4,13 +4,13 @@
 # peer.toml. Not the disk files: the live S7b crash (expected_hash without LF) passed every disk-file check.
 #   scripts/smoke-genesis-mount.sh <party> <public-dir> <peer.toml> [--strip-lf]
 # --strip-lf feeds the OLD buggy value (no trailing LF): the check must then FAIL (negative control). Needs docker, python3+PyYAML.
-# Env: NODE_IMAGE. peer.toml is read only (mounted ro); nothing is printed from it.
+# Env: NODE_IMAGE, GENESIS_CM (script to test; default deploy/peers/genesis-cm.sh, e.g. the old one from `git show origin/main~N:...`). peer.toml is read only (mounted ro); nothing is printed from it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 NODE_IMAGE=${NODE_IMAGE:-ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark}
 party=${1:?party} pub=${2:?public-dir} toml=${3:?peer.toml} strip=${4:-}
 T=$(mktemp -d); chmod 700 "$T"; trap 'rm -r -- "$T"' EXIT
-deploy/peers/genesis-cm.sh "$party" "$pub" | python3 -I -c '
+${GENESIS_CM:-deploy/peers/genesis-cm.sh} "$party" "$pub" | python3 -I -c '
 import sys, base64, yaml
 d = yaml.safe_load(sys.stdin)
 out, strip = sys.argv[1], sys.argv[2] == "--strip-lf"
