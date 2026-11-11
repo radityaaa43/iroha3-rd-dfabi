@@ -32,6 +32,7 @@ assert n == 1, "expected exactly one sumeragi_npos_parameters"
 json.dump(g, open(path, "w"), indent=2)
 PY
   sed 's|^expected_hash_file = .*|expected_hash = "REPLACE_WITH_GENESIS_EXPECTED_HASH"|' "$ln/peer0.toml" > "$ln/sign.toml"
+  chmod 600 "$ln/sign.toml"
   k genesis sign /work/out/ln/genesis.json --private-key-file /work/out/ln/genesis.private_key \
     --expected-public-key "$(cat "$ln/genesis.public_key")" --config /work/out/ln/sign.toml \
     --out-file /work/out/ln/new.signed.nrt --expected-hash-out /work/out/ln/new.expected_hash >/dev/null || { echo "re-sign failed" >&2; exit 1; }
@@ -47,7 +48,7 @@ peer, nexus = sys.argv[1:]
 t = tomllib.load(open(peer, "rb"))
 o = tomllib.load(open(nexus, "rb"))["nexus"]
 n = t.setdefault("nexus", {})
-for key in ("lane_count", "lane_catalog", "dataspace_catalog", "routing_policy"):
+for key in ("lane_count", "lane_catalog", "dataspace_catalog", "routing_policy", "storage"):
     n[key] = o[key]
 def key(k): return k if k and all(c.isalnum() and c.isascii() or c in "_-" for c in k) else json.dumps(k)
 def val(v):
@@ -87,13 +88,15 @@ if [[ $row == r4 ]]; then
 fi
 sleep 20
 cli() { docker run --rm --user "$U" --network host -v "$W:/work/out" --entrypoint iroha "$IMAGE" -c /work/out/ln/client.toml "$@"; }
-echo "-- /status shape:"; curl -s --max-time 5 http://127.0.0.1:18080/status | head -c 400; echo
-echo "-- one ping:"; cli ledger transaction ping --msg probe 2>&1 | head -c 600; echo
-(while :; do cli ledger transaction ping --msg probe >/dev/null 2>&1; sleep 1; done) &
+echo "-- containers:"; docker ps -a --format '{{.Names}} {{.Status}}'
+echo "-- node0 log tail:"; docker logs probe-n0 2>&1 | tail -6 | cut -c1-300
+echo "-- ops sumeragi status:"; cli ops sumeragi status 2>&1 | head -c 700; echo
+echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authority 2>&1 | head -c 600; echo
+(while :; do cli ledger transaction ping --msg probe --fee-payer authority >/dev/null 2>&1; sleep 1; done) &
 traffic=$!
 end=$((SECONDS + SECS)); last=""
 while ((SECONDS < end)); do
-  h=$(curl -s --max-time 4 http://127.0.0.1:18080/status | jq -r '.blocks // empty' 2>/dev/null)
+  h=$(cli ops sumeragi status 2>/dev/null | jq -r '.. | objects | select(has("height")) | .height' 2>/dev/null | sort -n | tail -1)
   echo "t=$((SECS - (end - SECONDS)))s height=${h:-?}"
   last=$h; sleep 5
 done
