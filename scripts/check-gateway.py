@@ -126,7 +126,7 @@ if cm:
         opa = yaml.safe_load(text)
         if "PRIVATE KEY" in text:
             bad.append("opa.yaml holds a private key")
-        if opa["services"] != {"bundle-server": {"url": f"http://bundle-server.rd-zeto-{party}.svc.cluster.local:8080"}}:
+        if opa["services"] != {"bundle-server": {"url": f"http://bundle-server.rd-zeto-{party}.svc.cluster.local"}}:
             bad.append(f"opa: services must be the same party's bundle-server only, got {opa['services']}")
         if opa["plugins"]["envoy_ext_authz_grpc"]["addr"] != "127.0.0.1:9191":
             bad.append(f"opa: ext_authz addr {opa['plugins']['envoy_ext_authz_grpc']['addr']}")

@@ -26,9 +26,9 @@ if party not in base["keys"]:
 if base.get("plugins", {}).get("envoy_ext_authz_grpc", {}).get("addr") != "127.0.0.1:9191":
     refuse("--opa-config needs plugins.envoy_ext_authz_grpc with addr 127.0.0.1:9191 (the address the envoy opa cluster dials)")
 # Read side only, as the Fabric-X gateway (rd-fabric-x#37): bundles come from the SAME party's bundle-server in its own cluster;
-# no sink, no token, decision logs and status on the console.
+# URL names the Service port 80 (no :8080: that is the pod port; 8081 is the sink); no sink, no token, decision logs and status on the console.
 opa = {**base,
-       "services": {"bundle-server": {"url": f"http://bundle-server.rd-zeto-{party}.svc.cluster.local:8080"}},
+       "services": {"bundle-server": {"url": f"http://bundle-server.rd-zeto-{party}.svc.cluster.local"}},
        "decision_logs": {"console": True},
        "status": {"console": True}}
 
