@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest>"""
+"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver]   (driver = the --role driver positive-control Pod only)"""
 import json
 import sys
 
 import yaml
 
 party, digest = sys.argv[1:3]
+drole = len(sys.argv) > 3 and sys.argv[3] == "driver"
+pname = "egress-probe-driver" if drole else "egress-probe"
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 bad = []
-want = {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
-if set(by) != want or len(docs) != 2:
+want = {("Pod", pname)} if drole else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
+if set(by) != want or len(docs) != len(want):
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)}")
 for (k, n), d in by.items():
     if d["metadata"].get("namespace") != ns:
@@ -20,12 +22,13 @@ flat = json.dumps(docs)
 for banned in ("PRIVATE KEY", "secretName", "secretKeyRef", "nodeName", "hostNetwork", "serviceAccountName", "ipBlock"):
     if banned in flat:
         bad.append(f"rendered objects must not contain {banned!r}")
-pod = by.get(("Pod", "egress-probe"))
+pod = by.get(("Pod", pname))
 if pod:
     lab, s = pod["metadata"]["labels"], pod["spec"]
     c = s["containers"][0]
     checks = {
-        "labels role=egress-probe + rd/egress-locked=true": lab.get("rd-iroha3/role") == "egress-probe" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party,
+        "labels": (lab.get("rd-iroha3/role") == "driver" and "rd/egress-locked" not in lab and lab.get("rd-iroha3/party") == party) if drole else
+                  (lab.get("rd-iroha3/role") == "egress-probe" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party),
         "digest-pinned driver image": c["image"] == f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}",
         "imagePullSecrets ghcr-pull": s.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "imagePullPolicy Always": c.get("imagePullPolicy") == "Always",
@@ -50,7 +53,7 @@ if pod:
         if need not in script:
             bad.append(f"probe loop lacks {need!r}")
 np = by.get(("NetworkPolicy", "egress-probe-egress"))
-if np:
+if np and not drole:
     sp = np["spec"]
     c1 = ("bi", "bank-a", "bank-b")
     gw_ns = c1 if party in c1 else ("bank-c",)

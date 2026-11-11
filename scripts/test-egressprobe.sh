@@ -37,6 +37,14 @@ chk status-json-pretty.http "http=200 ctype=application/json bytes=$(body_len st
 chk status-json-compact.http "http=200 ctype=application/json bytes=$(body_len status-json-compact.http) counts=[peers:3 blocks:1 view_changes:0 ]"
 chk status-norito-binary.http "http=200 ctype=application/x-norito bytes=$(body_len status-norito-binary.http) counts=[]"
 chk status-401.http "http=401 ctype=application/json bytes=$(body_len status-401.http) counts=[]"
+# --role driver: the positive control of the torii-bootstrap deletion (S14.G): ONLY a Pod labelled role=driver (no egress-locked label, no policy, no Secret)
+for p in bi bank-a bank-b bank-c; do
+  out=$("$R" "$p" "$D" --role driver 2>&1) || { fail "$p --role driver: render failed: $out"; continue; }
+  python3 -I scripts/check-egressprobe.py "$p" "$D" driver <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "egressprobe-driver" <<<"$out" || fails=$((fails + 1))
+done
+refuse "an unknown --role" "usage" bi "$D" --role frob
+refuse "--role without a value" "usage" bi "$D" --role
 a=$("$R" bi "$D"); b=$("$R" bi "$D")
 [[ -n $a && $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs or is empty"
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
