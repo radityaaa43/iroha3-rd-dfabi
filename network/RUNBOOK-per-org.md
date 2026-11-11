@@ -53,3 +53,12 @@ account or mint-finality file. Runs `kagami genesis generate ... default`, then 
 Each party's Secret is created in its OWN namespace `rd-iroha3-<party>` from that org's OWN material only, with that party's own credential
 (`~/iroha3-party-kubeconfigs`, Role verbs create/update/patch for Secrets). The old loader `deploy/secrets.sh` (it loads every party's peer Secret from one shared
 place into one namespace) must not be used or referenced for the new chain.
+
+## 7. Egress IPs for the p2p `/32` lists (S6 PRE input)
+`deploy/p2p/render.sh --external-cidr X/32` and `deploy/peers/render.sh` take the PEER cluster's egress address. Read it in the PRE, never from a namespace listing:
+run a throwaway pod in the party's OWN namespace on each cluster (`rd-iroha3-bi` on cluster 1, `rd-iroha3-bank-c` on cluster 2), `curl -s https://ifconfig.me` (or an equivalent),
+delete the pod, and hand the two addresses to qa as a PRE input. Each address becomes one `/32` (never wider) in both the ingress NetworkPolicy ipBlock and `loadBalancerSourceRanges`.
+
+## 8. Secret `bi-auditor-key` (S4)
+`deploy/ns/auditor-secret.sh` uses plain `kubectl create` with the BI party credential. The party-admin Role has no secrets `get`, so `apply` and `--dry-run` are Forbidden.
+A re-run fails with AlreadyExists and changes nothing. Rotation is a separate `replace` step, written when a rotation is ordered.
