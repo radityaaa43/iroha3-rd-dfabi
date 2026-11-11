@@ -36,15 +36,25 @@ else:
     role = need("Role", "party-admin")
     if role:
         sec = [r for r in role["rules"] if "secrets" in r.get("resources", [])]
-        if len(sec) != 1 or sorted(sec[0]["verbs"]) != ["create", "patch", "update"]:
-            bad.append(f"secrets verbs must be exactly create,update,patch: {sec}")
-        res = {x for r in role["rules"] for x in r.get("resources", [])}
-        for forbidden in ("pods/exec", "jobs", "*"):
-            if forbidden in res:
-                bad.append(f"role grants {forbidden}")
+        if len(sec) != 1 or sorted(sec[0]["verbs"]) != ["create", "patch", "update"] or sec[0]["apiGroups"] != [""]:
+            bad.append(f"secrets verbs must be exactly create,update,patch in the core group: {sec}")
+        # every rule has ONE api group, and each resource sits in its real group
+        group_of = {"statefulsets": "apps", "deployments": "apps", "networkpolicies": "networking.k8s.io"}
+        got = set()
+        for r in role["rules"]:
+            if len(r.get("apiGroups", [])) != 1:
+                bad.append(f"rule must name exactly one apiGroup: {r}")
+                continue
+            for res in r["resources"]:
+                got.add(res)
+                if res in ("pods/exec", "jobs", "*"):
+                    bad.append(f"role grants {res}")
+                want_group = group_of.get(res, "")
+                if r["apiGroups"][0] != want_group:
+                    bad.append(f"{res} is in api group {r['apiGroups'][0]!r}, want {want_group!r}")
         for want in ("statefulsets", "deployments", "services", "configmaps", "persistentvolumeclaims",
                      "networkpolicies", "pods", "pods/log"):
-            if want not in res:
+            if want not in got:
                 bad.append(f"role lacks {want}")
     rb = need("RoleBinding", "party-admin")
     if rb:
