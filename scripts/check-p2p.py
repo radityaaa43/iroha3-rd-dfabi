@@ -5,6 +5,7 @@ import sys
 import yaml
 
 party = sys.argv[1]
+want_ranges = sys.argv[2:]
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 bad = []
@@ -21,6 +22,8 @@ else:
         bad.append(f"exactly TCP 1337 -> p2p (never Torii 8080): {s.get('ports')}")
     if s.get("selector") != {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party, "rd-iroha3/role": "peer"}:
         bad.append(f"selector must pin the own party's peer pod: {s.get('selector')}")
+    if s.get("loadBalancerSourceRanges") != want_ranges or not want_ranges or any(not r.endswith("/32") for r in want_ranges):
+        bad.append(f"loadBalancerSourceRanges must be exactly the given /32 list {want_ranges}: {s.get('loadBalancerSourceRanges')}")
     if s.get("externalTrafficPolicy") != "Local":
         bad.append("externalTrafficPolicy must be Local (keeps the client source IP for the peers-p2p ipBlock)")
     if "clusterIP" in s and s["clusterIP"] == "None":
