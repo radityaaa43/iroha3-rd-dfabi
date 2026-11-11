@@ -78,6 +78,11 @@ if dep:
         "requests": c["resources"]["requests"] == {"cpu": "50m", "memory": "64Mi"},
         "limits": "cpu" in c["resources"]["limits"] and "memory" in c["resources"]["limits"],
         "healthz probes": c["livenessProbe"]["httpGet"]["path"] == "/healthz" and c["readinessProbe"]["httpGet"]["path"] == "/healthz",
+        # ANALYST Q10: the server answers ONE request at a time, so /healthz is unanswered while a /dvp-native waits for Applied
+        # (up to client.toml status_timeout_ms = 300 s). Liveness must outlast that (no kill mid-request); readiness fails fast so
+        # the Service stops routing to a busy driver.
+        "liveness outlasts a long request": c["livenessProbe"]["periodSeconds"] * c["livenessProbe"]["failureThreshold"] + c["livenessProbe"].get("timeoutSeconds", 1) >= 240,
+        "readiness fails fast": c["readinessProbe"]["periodSeconds"] * c["readinessProbe"]["failureThreshold"] <= 15 and c["readinessProbe"].get("timeoutSeconds", 1) <= 2,
         "role label driver": s["template"]["metadata"]["labels"].get("rd-iroha3/role") == "driver"
         and s["template"]["metadata"]["labels"].get("rd-iroha3/party") == party,
         "no zone or node pin": not any(k in pod for k in ("nodeName", "nodeSelector")) and "nodeAffinity" not in pod.get("affinity", {}),
