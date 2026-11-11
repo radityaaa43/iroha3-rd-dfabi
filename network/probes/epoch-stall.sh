@@ -8,7 +8,7 @@ IMAGE=${IMAGE:?IMAGE is required}
 L=${L:-1152921504606846976}
 SECS=${SECS:-150}
 HERE=$(cd "$(dirname "$0")" && pwd)
-W=${WORK:-$(mktemp -d)}; mkdir -p "$W"; chmod 777 "$W"
+W=${WORK:-$(mktemp -d)}; mkdir -p "$W"; chmod 700 "$W"
 U="$(id -u):$(id -g)"
 k() { docker run --rm --user "$U" -v "$W:/work/out" --entrypoint kagami "$IMAGE" "$@"; }
 mode=npos; case $row in r3 | r4) mode=permissioned ;; esac
@@ -17,6 +17,8 @@ echo "== row $row: consensus $mode, epoch_length_blocks ${EL:-n/a}"
 k localnet --peers 4 --consensus-mode "$mode" --chain-id 00000000-0000-4000-8000-000000000a01 \
   --base-api-port 18080 --base-p2p-port 11337 --out-dir /work/out/ln >/dev/null || { echo "localnet failed" >&2; exit 1; }
 ln="$W/ln"
+# iroha3d fails P2P startup ("SoraNet handshake negotiation failed") on a group-writable or setgid storage dir (deploy/peers/peer.yaml.tpl)
+find "$ln" -type d -exec chmod 700 {} +
 if [[ -n $EL ]]; then
   python3 -I - "$ln/genesis.json" "$EL" <<'PY' || exit 1
 import json, sys
