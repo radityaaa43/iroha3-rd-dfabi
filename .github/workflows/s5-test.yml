@@ -27,5 +27,9 @@ jobs:
         run: |
           docker pull -q "$NODE_IMAGE" >/dev/null
           docker pull -q "$DRIVER_IMAGE" >/dev/null
-      - name: "scripts/test-s5.sh (RUN_CHAIN=1)"
-        run: EPOCH_LENGTH=${{ matrix.epoch }} RUN_CHAIN=1 CHAIN_WAIT=300 bash scripts/test-s5.sh
+      # The 4-node chain run (RUN_CHAIN=1) is evidence only and manual: the hosted runner is CPU-bound (~1 block / 40 s), so it is
+      # NOT a merge gate. Pull requests run the offline checks only (keygen, assembly, manifest rows, render, --check-config).
+      - name: "scripts/test-s5.sh (chain run only on workflow_dispatch)"
+        env:
+          CHAIN: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        run: EPOCH_LENGTH=${{ matrix.epoch }} RUN_CHAIN="$CHAIN" CHAIN_WAIT=300 bash scripts/test-s5.sh

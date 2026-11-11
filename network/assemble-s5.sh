@@ -7,7 +7,8 @@
 #   Env: GENESIS_PRIVATE_KEY_FILE, GENESIS_PUBLIC_KEY (required); KAGAMI, IROHA (default kagami, iroha; wrappers must see the
 #     same absolute paths); OUT_DIR (default $PUBLIC_DIR); EPOCH_LENGTH (default 1152921504606846976 = 2^60, user decision
 #     "iroha iii", below u64::MAX/3); CHAIN_ID (default fresh uuid); KEEP_MANIFEST=<file> also writes the unsigned manifest.
-#   Outputs in $OUT_DIR: genesis.signed.nrt, genesis.expected_hash, genesis.public_key, chain_id, peer.template.toml (public).
+#   Outputs in $OUT_DIR: genesis.signed.nrt, genesis.expected_hash, genesis.public_key, chain_id, peer.template.toml and the unsigned
+#   genesis.manifest.json (all public).
 # The base content comes from a THROWAWAY `kagami localnet` (upstream's own bootstrap: fee asset, stake asset, fee sponsor,
 # aliases, lane-0 validators). Every key it makes is replaced by the orgs' public values and is deleted on exit (network/s5.py).
 set -euo pipefail
@@ -80,5 +81,5 @@ mkdir -p "$OUT_DIR"
 printf '%s\n' "$GENESIS_PUBLIC_KEY" > "$OUT_DIR/genesis.public_key"
 printf '%s\n' "$chain" > "$OUT_DIR/chain_id"
 cp "$tmp/peer.template.toml" "$OUT_DIR/peer.template.toml"
-[[ -z ${KEEP_MANIFEST:-} ]] || cp "$tmp/genesis.json" "$KEEP_MANIFEST"
+cp "$tmp/genesis.json" "${KEEP_MANIFEST:-$OUT_DIR/genesis.manifest.json}" # public data: lets the manifest rows be re-checked on the real artifact
 echo "assemble-s5.sh: wrote genesis.signed.nrt, genesis.expected_hash, genesis.public_key, chain_id, peer.template.toml to $OUT_DIR; destroy $GENESIS_PRIVATE_KEY_FILE now" >&2
