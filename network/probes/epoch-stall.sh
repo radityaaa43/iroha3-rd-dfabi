@@ -96,13 +96,15 @@ if [[ $row == r4 ]]; then
   docker logs probe-n0 2>&1 | tail -5 | cut -c1-300
   docker rm -f probe-n0 >/dev/null; exit 0
 fi
-sleep 20
+sleep 5
 cli() { docker run --rm --user "$U" --network host -v "$W:/work/out" --entrypoint iroha "$IMAGE" -c /work/out/ln/client.toml "$@"; }
 echo "-- containers:"; docker ps -a --format '{{.Names}} {{.Status}}'
-echo "-- node0 log (non-INFO lines, first 40):"; docker logs probe-n0 2>&1 | grep -v ' INFO ' | head -40 | cut -c1-300
+echo "-- waiting for Torii on node0 (max 240 s)"
+for _ in $(seq 1 48); do [[ -n $(curl -s --max-time 3 http://127.0.0.1:18080/status) ]] && break; sleep 5; done
+echo "-- GET /status:"; curl -s --max-time 5 http://127.0.0.1:18080/status | head -c 600; echo
+echo "-- node0 log (non-INFO lines after the banner):"; docker logs probe-n0 2>&1 | grep -v ' INFO ' | sed -n '17,40p' | cut -c1-300
 if [[ -z $(docker ps -q --filter name=probe-n) ]]; then echo "no node is running: probe invalid"; exit 1; fi
-for path in /status /v1/status /metrics; do echo "-- GET $path:"; curl -s --max-time 5 "http://127.0.0.1:18080$path" | head -c 500; echo; done
-echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authority 2>&1 | head -c 600; echo
+echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authority 2>&1 | head -c 700; echo
 (while :; do cli ledger transaction ping --msg probe --fee-payer authority >/dev/null 2>&1; sleep 1; done) &
 traffic=$!
 end=$((SECONDS + SECS)); last=""
