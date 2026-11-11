@@ -21,7 +21,8 @@ refuse() { local label=$1 reason=$2; shift 2; local out rc; out=$("$S" "$@" 2>&1
 refuse "no arguments" "usage"
 refuse "an unknown party" "usage" init nobody "$T/w"
 refuse "an unknown command" "usage" frob bi "$T/w"
-( unset CA_ENROLL_ALLOW_DISK; refuse "a work dir outside /dev/shm" "/dev/shm" init bi "$T/w" )
+mkdir -m 700 "$T/w0"; out=$(CA_ENROLL_ALLOW_DISK= "$S" init bi "$T/w0" 2>&1); rc=$?
+[[ $rc -eq 2 && $out == *"/dev/shm"* ]] && ok "refuses a work dir outside /dev/shm (exit 2)" || fail "outside /dev/shm: rc=$rc $out"
 mkdir -m 755 "$T/open"; refuse "a group/world-accessible work dir" "mode 700" init bi "$T/open"
 
 : > "$STUB_LOG"; W="$T/w"; mkdir -m 700 "$W"
