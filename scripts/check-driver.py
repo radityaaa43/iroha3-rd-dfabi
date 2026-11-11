@@ -8,6 +8,7 @@ import yaml
 
 party, digest, h8, chain = sys.argv[1:5]
 tlsmode = len(sys.argv) > 5 and sys.argv[5] == "tls"  # rendered with --audit-tls (iroha3 S13 transport A)
+remote = sys.argv[6:] if tlsmode else []  # --remote-gw-cidr values (gateways on the OTHER cluster, ipBlock TCP 8443)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -21,9 +22,9 @@ def need(kind, name):
     return d
 
 
-want_n = 5 if tlsmode else 4
+want_n = 6 if tlsmode else 4
 if len(docs) != want_n:
-    bad.append(f"want exactly {want_n} objects (ConfigMap driver-config, {'ConfigMap gateway-server-cas, ' if tlsmode else ''}Deployment, Service, NetworkPolicy), got {len(docs)}: {sorted(by)}")
+    bad.append(f"want exactly {want_n} objects (ConfigMap driver-config, {'ConfigMap gateway-server-cas, ' if tlsmode else ''}Deployment, Service, NetworkPolicy{' x2 (ingress + egress)' if tlsmode else ''}), got {len(docs)}: {sorted(by)}")
 for (k, n), d in by.items():
     if d["metadata"].get("namespace") != ns:
         bad.append(f"{k} {n} is in namespace {d['metadata'].get('namespace')}, want {ns}")
@@ -152,6 +153,35 @@ if np:
     if not (len(ing) == 1 and ing[0]["ports"] == [{"protocol": "TCP", "port": 8091}]
             and ing[0]["from"] == [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}]):
         bad.append(f"driver-ingress must admit only the gateway pods of the own namespace on TCP 8091: {ing}")
+
+# R17 precondition (lead): the key-holding driver gets its own narrow Egress policy WITH the S14 gateway path (--audit-tls): DNS, the own party's Torii, the
+# gateways on 8443 (same-cluster namespaces by selector; gateways of the other cluster only by explicit /32 --remote-gw-cidr). Without --audit-tls: none.
+eg = by.get(("NetworkPolicy", "driver-egress"))
+if not tlsmode:
+    if eg is not None:
+        bad.append("driver-egress must only be rendered with --audit-tls")
+else:
+    if eg is None:
+        bad.append("missing NetworkPolicy driver-egress")
+    else:
+        sp = eg["spec"]
+        c1 = ("bi", "bank-a", "bank-b")
+        gw_ns = c1 if party in c1 else ("bank-c",)
+        gw = lambda q: {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
+                        "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
+        want_eg = [
+            {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                     "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+             "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+            {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+            {"to": [gw(q) for q in gw_ns] + [{"ipBlock": {"cidr": c}} for c in remote], "ports": [{"protocol": "TCP", "port": 8443}]},
+        ]
+        if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "driver"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+            bad.append(f"driver-egress: selector role=driver, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+        if sp.get("egress") != want_eg:
+            bad.append(f"driver-egress rules differ from DNS + own Torii 8080 + gateways 8443 (+ remote /32): {json.dumps(sp.get('egress'))}")
+        if any(not c.endswith("/32") for c in remote):
+            bad.append("remote gateway CIDRs must be /32")
 
 cas = by.get(("ConfigMap", "gateway-server-cas"))
 if tlsmode:
