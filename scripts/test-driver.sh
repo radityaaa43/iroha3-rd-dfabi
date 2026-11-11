@@ -42,6 +42,14 @@ for p in bi bank-a bank-b bank-c; do
   out=$("$R" "$p" "$D" "$P" --audit-tls 2>&1) || { fail "$p --audit-tls: render failed: $out"; continue; }
   python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls <<<"$out" || fails=$((fails + 1))
 done
+# --audit-tls with the gateways of the OTHER cluster as explicit /32 ipBlocks (driver-egress)
+for p in bi bank-a bank-b bank-c; do
+  out=$("$R" "$p" "$D" "$P" --audit-tls --remote-gw-cidr 203.0.113.10/32 --remote-gw-cidr 203.0.113.11/32 2>&1) || { fail "$p --remote-gw-cidr: render failed: $out"; continue; }
+  python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls 203.0.113.10/32 203.0.113.11/32 <<<"$out" || fails=$((fails + 1))
+done
+refuse "a remote gateway CIDR that is not a /32" "/32" bi "$D" "$P" --audit-tls --remote-gw-cidr 10.0.0.0/8
+refuse "a remote gateway CIDR without a mask" "/32" bi "$D" "$P" --audit-tls --remote-gw-cidr 203.0.113.10
+refuse "--remote-gw-cidr without --audit-tls" "usage" bi "$D" "$P" --remote-gw-cidr 203.0.113.10/32
 mkdir "$T/p4"; cp "$P/chain_id" "$P/genesis.expected_hash" "$P/peers.json" "$T/p4/"
 refuse "--audit-tls without the public server CAs" "server-ca" bi "$D" "$T/p4" --audit-tls
 refuse "an unknown extra flag" "usage" bi "$D" "$P" --frob
