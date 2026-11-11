@@ -22,6 +22,8 @@ fee = nexus["fees"]["fee_asset_id"]
 lanes = {l["alias"]: l["index"] for l in nexus["lane_catalog"]}
 labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": "bi"}
 role = {**labels, "rd-iroha3/role": "pool-init"}
+# R17: a Job that mounts a key Secret is egress-locked: this label is what its own Egress NetworkPolicy (below) selects.
+locked = {**role, "rd/egress-locked": "true"}
 bi_torii = "http://bi-0.bi.rd-iroha3-bi.svc.cluster.local:8080/"
 toml = "\n".join(
     [
@@ -70,17 +72,31 @@ script = " && ".join(
         f"rd-dfabi pool-init /config/rd-dfabi.toml --rd-reserve {rd_reserve} --dfabi-reserve {dfabi_reserve}",
     ]
 )
+gateway = lambda p: {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{p}"}},
+                     "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
+egress_policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("pool-init-egress"),
+    "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "pool-init", "rd/egress-locked": "true"}}, "policyTypes": ["Egress"],
+             "egress": [
+                 # cluster DNS only
+                 {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                          "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                  "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                 # BI's own Torii (the governance transaction)
+                 {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": "bi"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+                 # the three auditor gateways (mutual TLS), nothing else
+                 {"to": [gateway(p) for p in ("bi", "bank-a", "bank-b")], "ports": [{"protocol": "TCP", "port": 8443}]},
+             ]}}
 docs = [
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("pool-init-config"),
      "data": {"rd-dfabi.toml": toml, "peers.json": json.dumps(peers, indent=2) + "\n"}},
     {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": meta("pools-index"),
      "spec": {"storageClassName": "alicloud-essd-wffc", "accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}},
-    {"apiVersion": "batch/v1", "kind": "Job", "metadata": {**meta("pool-init"), "labels": role},
+    {"apiVersion": "batch/v1", "kind": "Job", "metadata": {**meta("pool-init"), "labels": locked},
      "spec": {
          "backoffLimit": 0,
          "activeDeadlineSeconds": 1800,
          "ttlSecondsAfterFinished": 86400,
-         "template": {"metadata": {"labels": role}, "spec": {
+         "template": {"metadata": {"labels": locked}, "spec": {
              "restartPolicy": "Never",
              "automountServiceAccountToken": False,
              "enableServiceLinks": False,
@@ -119,5 +135,6 @@ docs = [
              ],
          }},
      }},
+    egress_policy,
 ]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
