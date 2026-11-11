@@ -52,8 +52,11 @@ jobs:
             --peers 4 --consensus-mode npos --chain-id 00000000-0000-4000-8000-000000000000 --out-dir /work/out >/dev/null 2>&1
           echo "localnet rc=$?"
           # the public mint-finality parameter file localnet wrote (it is a public roster, no seed)
-          pf=$(grep -rl '"epoch_roster"' "$ln" 2>/dev/null | head -3); echo "files holding epoch_roster:"; echo "$pf"
-          pf1=$(echo "$pf" | head -1)
+          echo "paths holding epoch_roster in localnet genesis.json:"
+          jq -c '[paths(type=="object" and has("epoch_roster"))]' "$ln/genesis.json" | cut -c1-300
+          jq -c '[.. | objects | select(has("epoch_roster"))][0] | {epoch_roster, next_epoch_roster: (.next_epoch_roster // null)}' "$ln/genesis.json" > "$RUNNER_TEMP/gd/extracted.json"
+          echo "extracted params keys + validators:"; jq -c '{keys: keys, n: (.epoch_roster.validators|length), epoch: .epoch_roster.epoch, vkeys: (.epoch_roster.validators[0]|keys)}' "$RUNNER_TEMP/gd/extracted.json" | cut -c1-300
+          pf1="$RUNNER_TEMP/gd/extracted.json"
           shape() { jq -c '{tx: (.transactions|length), kinds: ([.transactions[].instructions[]? | if type=="object" then keys[0] else "norito" end] | group_by(.) | map({(.[0]): length}) | add), topology: [.transactions[].topology|length], params: (.transactions[0].parameters // {} | keys), custom: ([.transactions[].parameters.custom // {} | keys[]] | sort)}' "$1"; }
           echo "--- localnet genesis.json shape"; shape "$ln/genesis.json"
           if [ -n "$pf1" ]; then
@@ -64,7 +67,7 @@ jobs:
               docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP/gd:/work/out" --entrypoint kagami "$IMAGE" genesis generate \
                 --profile iroha3-dev --ivm-dir "$ivm" --genesis-public-key "$pub" \
                 --kagemusha-mint-finality-parameters /work/out/params.json --consensus-mode npos default > "$RUNNER_TEMP/gd/g.json" 2> "$RUNNER_TEMP/gd/err.txt"
-              echo "rc=$?"; head -5 "$RUNNER_TEMP/gd/err.txt"
+              echo "rc=$?"; head -12 "$RUNNER_TEMP/gd/err.txt" | cut -c1-300
               [ -s "$RUNNER_TEMP/gd/g.json" ] && shape "$RUNNER_TEMP/gd/g.json" && break
             done
             echo "--- ivm_dir / libs in generated manifest"; jq -c '{ivm_dir: .ivm_dir, chain: .chain, consensus_mode: .consensus_mode}' "$RUNNER_TEMP/gd/g.json" 2>&1 | head -3
