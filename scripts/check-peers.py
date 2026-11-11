@@ -5,7 +5,9 @@ import sys
 import yaml
 
 party, h8, cidr = sys.argv[1:4]
-clb = len(sys.argv) > 4 and sys.argv[4] == "clb"  # --clb-health-cidr 100.64.0.0/10 requested
+flags = sys.argv[4:]
+clb = "clb" in flags  # --clb-health-cidr 100.64.0.0/10 requested
+c2 = "c2" in flags  # --cluster 2 (bank-c): no PriorityClass, no cluster-1 node exclusion, StorageClass fabricx-essd (WaitForFirstConsumer)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -29,7 +31,7 @@ if sts:
         "OnDelete": s["updateStrategy"]["type"] == "OnDelete",
         "image": c["image"] == "ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark",
         "init image": pod["initContainers"][0]["image"] == c["image"],
-        "priorityClassName": pod["priorityClassName"] == "rd-iroha3-peer",
+        "priorityClassName": ("priorityClassName" not in pod) if c2 else pod["priorityClassName"] == "rd-iroha3-peer",
         "args": c["args"] == ["--sora", "--config", "/config/peer.toml"],
         "startup /livez": c["startupProbe"]["httpGet"]["path"] == "/livez",
         "liveness /livez": c["livenessProbe"]["httpGet"]["path"] == "/livez",
@@ -38,10 +40,10 @@ if sts:
         "limits": c["resources"]["limits"] == {"cpu": "2000m", "memory": "3Gi"},
         "peer secret": any(v.get("secret", {}).get("secretName") == f"peer-{party}" for v in pod["volumes"]),
         "genesis configmap": any(v.get("configMap", {}).get("name") == f"genesis-{h8}" for v in pod["volumes"]),
-        "pvc 5Gi essd": s["volumeClaimTemplates"][0]["spec"]["storageClassName"] == "alicloud-essd-wffc"
+        "pvc 5Gi essd": s["volumeClaimTemplates"][0]["spec"]["storageClassName"] == ("fabricx-essd" if c2 else "alicloud-essd-wffc")
         and s["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"] == "5Gi",
         "init resources": all(k in pod["initContainers"][0].get("resources", {}) for k in ("requests", "limits")),
-        "excluded nodes": any(
+        "excluded nodes": ("nodeAffinity" not in pod.get("affinity", {})) if c2 else any(
             e.get("key") == "kubernetes.io/hostname" and e.get("operator") == "NotIn"
             and sorted(e.get("values", [])) == ["member-16033-node", "member-16034-node"]
             for t in pod.get("affinity", {}).get("nodeAffinity", {}).get("requiredDuringSchedulingIgnoredDuringExecution", {}).get("nodeSelectorTerms", [])

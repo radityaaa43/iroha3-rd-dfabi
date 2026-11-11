@@ -15,7 +15,9 @@ refuse() { # <label> <expected message part> <args...>
   err=$("$R" "$@" 2>&1 >/dev/null); rc=$?
   [[ $rc -eq 2 && $err == *"$part"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused as expected (rc=$rc: $err)"
 }
-refuse "bank-c (cluster 2, S8)" "S8" bank-c $H $CIDR
+refuse "bank-c without --cluster 2" "S8" bank-c $H $CIDR
+refuse "--cluster 2 with a cluster-1 party" "bank-c" --cluster 2 bi $H $CIDR
+refuse "--cluster 3" "usage" --cluster 3 bank-c $H $CIDR
 refuse "no arguments" "usage"
 refuse "unknown party" "usage" nobody $H $CIDR
 refuse "bad genesis hash" "hash8" bi nothex $CIDR
@@ -36,5 +38,11 @@ for p in bi bank-a bank-b; do # the CLB health-check source is opt-in; Alibaba C
   python3 -I scripts/check-peers.py "$p" $H $CIDR clb <<<"$out" || fails=$((fails + 1))
   [[ $("$R" "$p" $H $CIDR | grep -c '100\.64\.') -eq 0 ]] && ok "$p: default render has no 100.64 element" || fail "$p: default render carries 100.64"
 done
+# S8: bank-c on cluster 2 (default and with the CLB element)
+out=$("$R" --cluster 2 bank-c $H $CIDR 2>&1) || fail "bank-c --cluster 2: render failed: $out"
+python3 -I scripts/check-peers.py bank-c $H $CIDR c2 <<<"$out" || fails=$((fails + 1))
+grep -q 'alicloud' <<<"$out" && fail "bank-c --cluster 2 still names a cluster-1 StorageClass (alicloud-*)"
+out=$("$R" --clb-health-cidr 100.64.0.0/10 --cluster 2 bank-c $H $CIDR 2>&1) || fail "bank-c --cluster 2 --clb-health-cidr: render failed: $out"
+python3 -I scripts/check-peers.py bank-c $H $CIDR clb c2 <<<"$out" || fails=$((fails + 1))
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
