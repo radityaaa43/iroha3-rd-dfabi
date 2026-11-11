@@ -4,6 +4,8 @@
 #   deploy/ns/auditor-secret.sh <custody-dir>
 # Refuses a missing dir/file, a group- or world-accessible file, and a custody dir inside a git checkout. Prints no value.
 # KUBECTL (default kubectl) is the command to run; use the BI party kubeconfig (KUBECONFIG=...rd-iroha3-bi.kubeconfig).
+# Plain `create` only: the party-admin Role has no secrets `get`, so `apply`/`--dry-run` would be Forbidden. A re-run fails with
+# AlreadyExists and changes nothing (safe). Rotation is a separate `replace` step, not done here.
 set -euo pipefail
 dir=${1:-}
 [[ -n $dir ]] || { echo "usage: auditor-secret.sh <custody-dir>" >&2; exit 2; }
@@ -20,6 +22,5 @@ while [[ $d != / ]]; do
 done
 KUBECTL=${KUBECTL:-kubectl}
 "$KUBECTL" create secret generic bi-auditor-key -n rd-iroha3-bi \
-  --from-file=bi-auditor.seed="$real/bi-auditor.seed" --from-file=bi-auditor.hybrid="$real/bi-auditor.hybrid" \
-  --dry-run=client -o yaml | "$KUBECTL" apply -f - >/dev/null
-echo "auditor-secret.sh: Secret bi-auditor-key applied in rd-iroha3-bi (values not printed)"
+  --from-file=bi-auditor.seed="$real/bi-auditor.seed" --from-file=bi-auditor.hybrid="$real/bi-auditor.hybrid" >/dev/null
+echo "auditor-secret.sh: Secret bi-auditor-key created in rd-iroha3-bi (values not printed)"
