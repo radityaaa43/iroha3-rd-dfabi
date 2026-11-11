@@ -97,7 +97,8 @@ fi
 sleep 20
 cli() { docker run --rm --user "$U" --network host -v "$W:/work/out" --entrypoint iroha "$IMAGE" -c /work/out/ln/client.toml "$@"; }
 echo "-- containers:"; docker ps -a --format '{{.Names}} {{.Status}}'
-echo "-- node0 log tail:"; docker logs probe-n0 2>&1 | tail -6 | cut -c1-300
+echo "-- node0 log (non-INFO lines, first 40):"; docker logs probe-n0 2>&1 | grep -v ' INFO ' | head -40 | cut -c1-300
+if [[ -z $(docker ps -q --filter name=probe-n) ]]; then echo "no node is running: probe invalid"; exit 1; fi
 for path in /status /v1/status /metrics; do echo "-- GET $path:"; curl -s --max-time 5 "http://127.0.0.1:18080$path" | head -c 500; echo; done
 echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authority 2>&1 | head -c 600; echo
 (while :; do cli ledger transaction ping --msg probe --fee-payer authority >/dev/null 2>&1; sleep 1; done) &
