@@ -9,9 +9,10 @@ labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
 pod_labels = {**labels, "rd-iroha3/role": "egress-probe", "rd/egress-locked": "true"}
 loop = r'''tcp() { timeout 4 bash -c 'exec 3<>/dev/tcp/$0/$1' "$1" "$2" 2>/dev/null; case $? in 0) echo OPEN;; 124) echo TIMEOUT;; 1) echo REFUSED;; *) echo rc$?;; esac; }
 dns() { getent hosts "$1" >/dev/null 2>&1 && echo ok || echo NXDOMAIN; }
+st() { exec 3<>/dev/tcp/"$1"/8080 2>/dev/null || { echo na; return; }; printf 'GET /status HTTP/1.0\r\nHost: x\r\nAccept: application/json\r\n\r\n' >&3; timeout 4 cat <&3 | tr -d '\n' | grep -oE '"(peers|blocks|view_changes)":[0-9]+' | tr -d '"' | tr '\n' ' '; exec 3>&-; }
 while true; do
   GH=$(getent ahostsv4 ghcr.io 2>/dev/null | awk 'NR==1{print $1}'); GH=${GH:-none}
-  line="$(date -u +%T) dns_own=$(dns PEER) dns_ghcr=$(dns ghcr.io) peer:8080=$(tcp PEER 8080) 1.1.1.1:443=$(tcp 1.1.1.1 443) 8.8.8.8:53=$(tcp 8.8.8.8 53) apiserver:443=$(tcp "$KUBERNETES_SERVICE_HOST" 443) ghcr($GH):443=$(tcp "$GH" 443)"
+  line="$(date -u +%T) dns_own=$(dns PEER) dns_ghcr=$(dns ghcr.io) peer:8080=$(tcp PEER 8080) status=[$(st PEER)] 1.1.1.1:443=$(tcp 1.1.1.1 443) 8.8.8.8:53=$(tcp 8.8.8.8 53) apiserver:443=$(tcp "$KUBERNETES_SERVICE_HOST" 443) ghcr($GH):443=$(tcp "$GH" 443)"
   for q in GWNS; do line="$line gw-$q:8443=$(dns gateway.rd-iroha3-$q.svc.cluster.local)/$(tcp gateway.rd-iroha3-$q.svc.cluster.local 8443)"; done
   echo "$line"
   sleep 15
