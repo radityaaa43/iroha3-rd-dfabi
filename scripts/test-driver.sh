@@ -42,7 +42,8 @@ for p in bi bank-a bank-b bank-c; do
   out=$("$R" "$p" "$D" "$P" --audit-tls 2>&1) || { fail "$p --audit-tls: render failed: $out"; continue; }
   python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls <<<"$out" || fails=$((fails + 1))
 done
-refuse "--audit-tls without the public server CAs" "server-ca" bi "$D" "$T/p2" --audit-tls
+mkdir "$T/p4"; cp "$P/chain_id" "$P/genesis.expected_hash" "$P/peers.json" "$T/p4/"
+refuse "--audit-tls without the public server CAs" "server-ca" bi "$D" "$T/p4" --audit-tls
 refuse "an unknown extra flag" "usage" bi "$D" "$P" --frob
 a=$("$R" bi "$D" "$P"); b=$("$R" bi "$D" "$P")
 [[ $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs"
