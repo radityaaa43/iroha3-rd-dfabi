@@ -37,7 +37,7 @@ spec:
       # 0700 owner-only /storage starts). Run iroha3d on an owner-only, non-setgid subdir.
       initContainers:
         - name: storage-dir
-          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          image: ghcr.io/radityaaa43/iroha3-rd-node@sha256:bf81cd7379ffb9e2aac096ee9489bcd0ea96cd82350b073db8bc9a4c9a3efc60
           command: [sh, -c, 'mkdir -p /pvc/data && chmod 00700 /pvc/data'] # 00700 also clears setgid
           securityContext:
             allowPrivilegeEscalation: false
@@ -48,7 +48,7 @@ spec:
               mountPath: /pvc
       containers:
         - name: iroha3d
-          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          image: ghcr.io/radityaaa43/iroha3-rd-node@sha256:bf81cd7379ffb9e2aac096ee9489bcd0ea96cd82350b073db8bc9a4c9a3efc60
           # Bypass the image's Taira entrypoint; same invocation network/check.sh validates.
           # --sora is required for the 3-lane Nexus config (irohad main.rs: SoraProfileRequired). The
           # DA store root it would default is set explicitly in peer.toml under /storage/state.

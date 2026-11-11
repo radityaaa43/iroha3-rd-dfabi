@@ -93,7 +93,7 @@ spec:
         - name: ghcr-pull
       initContainers:
         - name: storage-dir
-          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          image: ghcr.io/radityaaa43/iroha3-rd-node@sha256:bf81cd7379ffb9e2aac096ee9489bcd0ea96cd82350b073db8bc9a4c9a3efc60
           command: [sh, -c, 'mkdir -p /pvc/data && chmod 00700 /pvc/data'] # 00700 also clears setgid
           resources:
             requests:
@@ -111,7 +111,7 @@ spec:
               mountPath: /pvc
       containers:
         - name: iroha3d
-          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          image: ghcr.io/radityaaa43/iroha3-rd-node@sha256:bf81cd7379ffb9e2aac096ee9489bcd0ea96cd82350b073db8bc9a4c9a3efc60
           command: [iroha3d]
           args: [--sora, --config, /config/peer.toml]
           env:
