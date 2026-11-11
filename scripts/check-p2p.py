@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Check a rendered p2p LoadBalancer Service on stdin. Usage: check-p2p.py <party>"""
+"""Check a rendered p2p LoadBalancer Service on stdin. Usage: check-p2p.py <party> <acl-id> <cidr>..."""
 import sys
 
 import yaml
 
-party = sys.argv[1]
-want_ranges = sys.argv[2:]
+party, acl = sys.argv[1:3]
+want_ranges = sys.argv[3:]
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 bad = []
@@ -28,6 +28,13 @@ else:
         bad.append("externalTrafficPolicy must be Local (keeps the client source IP for the peers-p2p ipBlock)")
     if "clusterIP" in s and s["clusterIP"] == "None":
         bad.append("a LoadBalancer Service cannot be headless")
+    want_ann = {
+        "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-acl-status": "on",
+        "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-acl-type": "white",
+        "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-acl-id": acl,
+    }
+    if d["metadata"].get("annotations") != want_ann:
+        bad.append(f"annotations must be exactly the three ACL annotations on/white/{acl}: {d['metadata'].get('annotations')}")
     if d["metadata"].get("labels", {}).get("app.kubernetes.io/part-of") != "rd-iroha3":
         bad.append("label part-of=rd-iroha3 missing")
 for b in bad:

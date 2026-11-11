@@ -3,13 +3,17 @@
 # assigns goes into network/public/peers.addr.json (field `external`), and from there into `public_address` / `trusted_peers`.
 # externalTrafficPolicy Local keeps the client source IP, which the peers-p2p ipBlock needs [unverified: test before S8].
 # loadBalancerSourceRanges = the peer cluster's egress address(es) as /32 entries (render.sh --external-cidr, never wider).
-# [unverified] whether the Alibaba cloud controller maps loadBalancerSourceRanges to an LB access-control list; the
-# peers-p2p NetworkPolicy (ipBlock, same /32 list) is the second layer.
+# loadBalancerSourceRanges creates no ACL on the Alibaba CLB (besu's read-only diagnosis): the real whitelist is the pre-created
+# access-control list named by --acl-id (annotations below). The peers-p2p NetworkPolicy (ipBlock, same /32 list) is the second layer.
 apiVersion: v1
 kind: Service
 metadata:
   name: p2p
   namespace: rd-iroha3-@PARTY@
+  annotations:
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-acl-status: "on"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-acl-type: "white"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-acl-id: "@ACL_ID@"
   labels:
     app.kubernetes.io/part-of: rd-iroha3
     rd-iroha3/party: "@PARTY@"

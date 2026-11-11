@@ -12,21 +12,24 @@ refuse() { # <label> <expected message part> <args...>
   err=$("$R" "$@" 2>&1 >/dev/null); rc=$?
   [[ $rc -eq 2 && $err == *"$part"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused as expected (rc=$rc: $err)"
 }
-X1=203.0.113.10/32 X2=198.51.100.7/32
-refuse "bank-c without --cluster 2" "cluster 2" --external-cidr $X1 bank-c
+X1=203.0.113.10/32 X2=198.51.100.7/32 ACL=acl-test0123abcd
+refuse "bank-c without --cluster 2" "cluster 2" --acl-id $ACL --external-cidr $X1 bank-c
+refuse "a missing --acl-id" "acl-id" --external-cidr $X1 bi
+refuse "an empty --acl-id" "acl-id" --acl-id "" --external-cidr $X1 bi
+refuse "an --acl-id with a quote or space" "acl-id" --acl-id "a b\"c" --external-cidr $X1 bi
 refuse "no argument" "usage"
-refuse "unknown party" "usage" --external-cidr $X1 nobody
-refuse "bi on cluster 2" "bank-c" --cluster 2 --external-cidr $X1 bi
-refuse "cluster 3" "usage" --cluster 3 --external-cidr $X1 bank-c
-refuse "a missing --external-cidr" "external-cidr" bi
-refuse "a /24 range" "/32" --external-cidr 203.0.113.0/24 bi
-refuse "0.0.0.0/0" "/32" --external-cidr 0.0.0.0/0 bi
-refuse "a malformed cidr" "/32" --external-cidr not-a-cidr bi
+refuse "unknown party" "usage" --acl-id $ACL --external-cidr $X1 nobody
+refuse "bi on cluster 2" "bank-c" --cluster 2 --acl-id $ACL --external-cidr $X1 bi
+refuse "cluster 3" "usage" --cluster 3 --acl-id $ACL --external-cidr $X1 bank-c
+refuse "a missing --external-cidr" "external-cidr" --acl-id $ACL bi
+refuse "a /24 range" "/32" --acl-id $ACL --external-cidr 203.0.113.0/24 bi
+refuse "0.0.0.0/0" "/32" --acl-id $ACL --external-cidr 0.0.0.0/0 bi
+refuse "a malformed cidr" "/32" --acl-id $ACL --external-cidr not-a-cidr bi
 for p in bi bank-a bank-b; do
-  out=$("$R" --external-cidr $X1 --external-cidr $X2 "$p" 2>&1) || { fail "$p: render failed: $out"; continue; }
-  python3 -I scripts/check-p2p.py "$p" $X1 $X2 <<<"$out" || fails=$((fails + 1))
+  out=$("$R" --acl-id $ACL --external-cidr $X1 --external-cidr $X2 "$p" 2>&1) || { fail "$p: render failed: $out"; continue; }
+  python3 -I scripts/check-p2p.py "$p" $ACL $X1 $X2 <<<"$out" || fails=$((fails + 1))
 done
-out=$("$R" --cluster 2 --external-cidr $X1 bank-c 2>&1) || fail "bank-c: render failed: $out"
-python3 -I scripts/check-p2p.py bank-c $X1 <<<"$out" || fails=$((fails + 1))
+out=$("$R" --cluster 2 --acl-id $ACL --external-cidr $X1 bank-c 2>&1) || fail "bank-c: render failed: $out"
+python3 -I scripts/check-p2p.py bank-c $ACL $X1 <<<"$out" || fails=$((fails + 1))
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
