@@ -235,6 +235,13 @@ spec:
         - podSelector:
             matchLabels:
               rd-iroha3/role: gateway
+        # The party's OWN clients (driver, auditor, pool-init Job) reach its own Torii inside this ONE namespace; without this they
+        # lose the path when torii-bootstrap is deleted (S14).
+        - podSelector:
+            matchExpressions:
+              - key: rd-iroha3/role
+                operator: In
+                values: [auditor, driver, pool-init]
         # @TELEMETRY-BEGIN@
         - namespaceSelector:
             matchExpressions:
