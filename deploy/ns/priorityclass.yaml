@@ -1,0 +1,11 @@
+# Cluster 1 only (cluster-scoped). Same value as the live `iroha3-peer` (10000). NOT for cluster 2: a priority above
+# the default could preempt foreign pods there.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rd-iroha3-peer
+  labels:
+    app.kubernetes.io/part-of: rd-iroha3
+value: 10000
+globalDefault: false
+description: "rd-iroha3 validator peers (cluster 1 only)"
