@@ -76,9 +76,14 @@ if cm:
             else:
                 routes = vh[0]["routes"]
                 driver_paths = ["/settle-grant", "/dvp-native"] + (["/mint"] if party == "bi" else [])
-                got = [(r["match"].get("path"), r["route"]["cluster"]) for r in routes[:-1]]
-                if got != [(p, "driver") for p in driver_paths]:
-                    bad.append(f"envoy: driver routes must be exactly {driver_paths} (exact path match, in order), got {got}")
+                # S12/S13 transport A: the party's OWN auditor is reached through its gateway (/keys, /approve; /records on BI only)
+                auditor_exact = ["/keys", "/approve"] + (["/records"] if party == "bi" else [])
+                want_routes = [({"path": p}, "driver") for p in driver_paths] + [({"path": p}, "auditor") for p in auditor_exact]
+                if party == "bi":
+                    want_routes.append(({"prefix": "/records/"}, "auditor"))
+                got = [(r["match"], r["route"]["cluster"]) for r in routes[:-1]]
+                if got != want_routes:
+                    bad.append(f"envoy: routes before the default must be exactly {want_routes} (exact paths, in order), got {got}")
                 last = routes[-1]
                 if last["match"] != {"prefix": "/"} or last["route"]["cluster"] != "torii":
                     bad.append(f"envoy: last route must be prefix / -> torii, got {last['match']} {last['route']['cluster']}")
@@ -91,8 +96,8 @@ if cm:
                     if r["route"].get("timeout") in (None, "0s"):
                         bad.append("envoy: every route needs an explicit timeout")
         cl = {c["name"]: c for c in sr["clusters"]}
-        if set(cl) != {"torii", "driver", "opa"}:
-            bad.append(f"envoy: clusters {sorted(cl)}, want torii, driver, opa")
+        if set(cl) != {"torii", "driver", "auditor", "opa"}:
+            bad.append(f"envoy: clusters {sorted(cl)}, want torii, driver, auditor, opa")
         else:
             def target(c):
                 s = c["load_assignment"]["endpoints"][0]["lb_endpoints"][0]["endpoint"]["address"]["socket_address"]
@@ -101,10 +106,12 @@ if cm:
                 bad.append(f"envoy: torii cluster -> {target(cl['torii'])}")
             if target(cl["driver"]) != (f"driver.{ns}.svc.cluster.local", 8091):
                 bad.append(f"envoy: driver cluster -> {target(cl['driver'])}")
+            if target(cl["auditor"]) != (f"auditor.{ns}.svc.cluster.local", 8090):
+                bad.append(f"envoy: auditor cluster -> {target(cl['auditor'])}")
             if target(cl["opa"]) != ("127.0.0.1", 9191):
                 bad.append(f"envoy: opa cluster -> {target(cl['opa'])}")
-            if cl["torii"]["type"] != "STRICT_DNS" or cl["driver"]["type"] != "STRICT_DNS":
-                bad.append("envoy: torii and driver clusters must be STRICT_DNS (other pods)")
+            if any(cl[c]["type"] != "STRICT_DNS" for c in ("torii", "driver", "auditor")):
+                bad.append("envoy: torii, driver and auditor clusters must be STRICT_DNS (other pods)")
         if env["admin"]["address"]["socket_address"] != {"address": "127.0.0.1", "port_value": 9901}:
             bad.append("envoy: admin must listen on 127.0.0.1:9901 only")
 
