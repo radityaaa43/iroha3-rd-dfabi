@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        epoch: [3600, 1152921504606846976] # bisect: stock default vs the S5b value (2^60)
+        epoch: ['3600', '1152921504606846976'] # strings: YAML would turn the big number into a float
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
