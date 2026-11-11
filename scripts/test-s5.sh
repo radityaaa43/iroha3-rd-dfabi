@@ -90,14 +90,18 @@ if [[ -n ${RUN_CHAIN:-} ]] && (( fails == 0 )); then
     port=$((port + 1))
   done
   h=0
-  for _ in $(seq 1 "${CHAIN_WAIT:-120}"); do
-    h=$(curl -s --max-time 4 http://127.0.0.1:18080/status | jq -r '.blocks // 0' 2>/dev/null || echo 0)
+  for n in $(seq 1 "${CHAIN_WAIT:-120}"); do
+    st=$(curl -s --max-time 4 http://127.0.0.1:18080/status)
+    h=$(jq -r '.blocks // 0' <<<"$st" 2>/dev/null || echo 0)
+    ((n % 6 == 1)) && echo "t=$((n * 5))s height=$h peers=$(jq -r '.peers // "?"' <<<"$st" 2>/dev/null) running=$(docker ps -q --filter name=s5- | wc -l)/4"
     [[ $(docker ps -q --filter name=s5- | wc -l) -eq 4 ]] || { fail "a peer container stopped"; break; }
-    ((h >= 3)) && break
+    ((h >= ${CHAIN_BLOCKS:-3})) && break
     sleep 5
   done
+  docker stats --no-stream --format 'cpu {{.Name}} {{.CPUPerc}} mem {{.MemUsage}}' 2>/dev/null | grep s5- || true
+  echo "host: $(nproc) cpus, $(free -m | awk 'NR==2{print $2" MB total, "$7" MB available"}')"
   seen=$(curl -s --max-time 4 http://127.0.0.1:18080/status | jq -r '.peers // "?"')
-  if ((h >= 3)); then ok "4 peers from the signed genesis commit blocks: height $h, peers seen by bi: $seen"; else
+  if ((h >= ${CHAIN_BLOCKS:-3})); then ok "4 peers from the signed genesis commit blocks: height $h, peers seen by bi: $seen"; else
     fail "no progress: height $h"
     for p in bi bank-b; do
       echo "-- s5-$p: first 25 WARN/ERROR lines (noise filtered)"
