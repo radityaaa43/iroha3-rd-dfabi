@@ -1,4 +1,4 @@
-# Per-party namespace set for cluster 1 (iroha3 PLAN S1a/S1b). deploy/ns/render.sh replaces @PARTY@ and prints it.
+# Per-party namespace set (iroha3 PLAN S1a/S1b): bi, bank-a, bank-b on cluster 1; bank-c on cluster 2. deploy/ns/render.sh replaces @PARTY@ and prints it.
 # Default-deny ingress only: the allow rules (p2p, Torii) arrive with the peers (S7). No egress policy, no workloads.
 apiVersion: v1
 kind: Namespace
@@ -7,6 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: rd-iroha3
     rd-iroha3/party: "@PARTY@"
+    @CLUSTER_LABEL@
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -37,8 +38,17 @@ metadata:
   labels:
     app.kubernetes.io/part-of: rd-iroha3
 rules:
-  - apiGroups: ["", "apps", "networking.k8s.io"]
-    resources: [statefulsets, deployments, services, configmaps, persistentvolumeclaims, networkpolicies, pods, pods/log]
+  - apiGroups: [""]
+    resources: [services, configmaps, persistentvolumeclaims, pods]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [statefulsets, deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [""]
     resources: [secrets]
