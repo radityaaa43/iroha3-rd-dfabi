@@ -4,7 +4,7 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
-IMAGE=ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+IMAGE=ghcr.io/radityaaa43/iroha3-rd-node@sha256:bf81cd7379ffb9e2aac096ee9489bcd0ea96cd82350b073db8bc9a4c9a3efc60
 fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 ok() { echo "ok:   $*"; }

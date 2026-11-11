@@ -29,7 +29,7 @@ if sts:
         "serviceName": s["serviceName"] == party,
         "replicas 1": s["replicas"] == 1,
         "OnDelete": s["updateStrategy"]["type"] == "OnDelete",
-        "image": c["image"] == "ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark",
+        "image": c["image"] == "ghcr.io/radityaaa43/iroha3-rd-node@sha256:bf81cd7379ffb9e2aac096ee9489bcd0ea96cd82350b073db8bc9a4c9a3efc60",
         "init image": pod["initContainers"][0]["image"] == c["image"],
         "imagePullSecrets ghcr-pull": pod.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "priorityClassName": ("priorityClassName" not in pod) if c2 else pod["priorityClassName"] == "rd-iroha3-peer",
