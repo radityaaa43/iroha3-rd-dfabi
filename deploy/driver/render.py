@@ -6,6 +6,7 @@ import tomllib
 
 party, digest, pub, network = sys.argv[1:5]
 audit_tls = len(sys.argv) > 5 and sys.argv[5] == "--audit-tls"
+remote_gw = sys.argv[6:] if audit_tls else []
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
 read = lambda name: open(f"{pub}/{name}").read()
@@ -119,5 +120,20 @@ docs = [
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Ingress"],
               "ingress": [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}],
                            "ports": [{"protocol": "TCP", "port": 8091}]}]}},
+    # R17 (key-holding pod: the bank seed): its own narrow Egress policy, rendered with the S14 gateway path. DNS; the own party's Torii; the gateways on 8443
+    # (same-cluster namespaces by selector; the other cluster's gateways ONLY as the explicit /32 external LB addresses given by --remote-gw-cidr).
+    *([{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "driver-egress", "namespace": ns, "labels": labels},
+        "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Egress"],
+                 "egress": [
+                     {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                              "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                      "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                     {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+                     {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
+                              "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
+                             for q in (("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",))]
+                            + [{"ipBlock": {"cidr": c}} for c in remote_gw],
+                      "ports": [{"protocol": "TCP", "port": 8443}]},
+                 ]}}] if audit_tls else []),
 ]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
