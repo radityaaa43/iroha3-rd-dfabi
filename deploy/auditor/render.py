@@ -108,5 +108,15 @@ docs = [
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}, "policyTypes": ["Ingress"],
               "ingress": [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}],
                            "ports": [{"protocol": "TCP", "port": 8090}]}]}},
+    # R17 (key-holding pod: the auditor seed): its own narrow Egress policy, applied together with it. DNS and its own party's Torii only;
+    # approvals arrive INBOUND through the gateway, so no cross-party and no internet egress.
+    {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("auditor-egress"),
+     "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}, "policyTypes": ["Egress"],
+              "egress": [
+                  {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                           "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                   "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                  {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+              ]}},
 ]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))

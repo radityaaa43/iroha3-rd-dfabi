@@ -187,4 +187,18 @@ if cluster == "2" or acl:
 docs.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("gateway-ingress"),
              "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "gateway"}}, "policyTypes": ["Ingress"],
                       "ingress": [{"ports": [{"protocol": "TCP", "port": 8443}]}]}})
+# R17 (key-holding pod: tls.key): the gateway's own narrow Egress policy, applied together with it. DNS, the own Torii, driver, auditor, and the
+# SAME party's bundle-server (POD port 8080; Service port 80 is DNAT-ed to it; never the 8081 sink). No ipBlock: nothing else leaves the pod.
+docs.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("gateway-egress"),
+             "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}, "policyTypes": ["Egress"],
+                      "egress": [
+                          {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                           "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                   "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                          {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+                          {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}}], "ports": [{"protocol": "TCP", "port": 8091}]},
+                          {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}}], "ports": [{"protocol": "TCP", "port": 8090}]},
+                          {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-zeto-{party}"}},
+                                   "podSelector": {"matchLabels": {"app": "bundle-server"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+                      ]}})
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
