@@ -52,6 +52,9 @@ else:
                 want_group = group_of.get(res, "")
                 if r["apiGroups"][0] != want_group:
                     bad.append(f"{res} is in api group {r['apiGroups'][0]!r}, want {want_group!r}")
+        logs = [r for r in role["rules"] if "pods/log" in r.get("resources", [])]
+        if len(logs) != 1 or sorted(logs[0]["verbs"]) != ["get", "list", "watch"] or logs[0]["resources"] != ["pods/log"]:
+            bad.append(f"pods/log needs its own rule with get,list,watch only: {logs}")
         for want in ("statefulsets", "deployments", "services", "configmaps", "persistentvolumeclaims",
                      "networkpolicies", "pods", "pods/log"):
             if want not in got:
