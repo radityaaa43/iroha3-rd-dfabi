@@ -1,5 +1,14 @@
 # iroha3 notes
 
+## Rollout record: driver image be4dd898 (2026-11-11, user-approved, lead GO A)
+
+- 14:56-15:03 CST: driver image `c1afa678` -> `be4dd898` (node-build main `be4dd898`: L1 receipt-cache tmp, M1 pools.json lock, M2 + M2b abort rules, M3 `/records` 7 fields, M4 wallet item `fee`). Build run 42974259078; digest `sha256:ab6e8154c919e4a25dd5817158756c6a4921e814212c5cd42b89e2c882a337f7`. Node image and validators untouched.
+- Auditor: `scenario.yml` target=auditor tag=be4dd898, run 42975917312 (110 s), `bi-auditor` Recreate, 1/1. Lensa: pin at `frontend/server/state/iroha3.json:21` (git-ignored) + one `lensa.service` restart.
+- Checked: `/records` 7 keys (117 records); rd-transfer A->B 1 unit, block 554, bank-a RD -2 (1 + fee 1), wallet item `fee:"1"`; after the flow two driver reads both exit 0; storage 7% x4.
+- Rollback: `scenario` target=auditor tag=`c1afa678`, pin back to `:c1afa678`, restart `lensa.service`. No data to restore.
+- `bi-auditor` log `request failed: Broken pipe` every 10 s = the tcpSocket readiness probe, benign (not compared with the old pod).
+- Not exercised live: the M2/M2b abort paths (need a real failed bundle).
+
 ## Parked
 
 - **Wallet reads next to a proof (INVESTIGATE, parked 2026-11-10 by lead).** After the restart
