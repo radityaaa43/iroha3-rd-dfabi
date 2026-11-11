@@ -53,5 +53,21 @@ refuse "a private key given as a trust PEM" "private key" trust bank-a "$W" "$T/
 refuse "trust without any PEM" "usage" trust bank-a "$W"
 : > "$STUB_LOG"; out=$(STUB_EXISTS=1 "$S" trust bank-a "$W" "$T/lensa.pem" "$P/bank-a-role-ca.pem" 2>&1); rc=$?
 [[ $rc -ne 0 && $out == *AlreadyExists* && $out != *" created in "* ]] && ok "kubectl failure: non-zero exit, no success line (pipefail/rc)" || fail "kubectl failure: rc=$rc $out"
+# lensa-ca (W2, option 2): a SEPARATE Iroha Lensa client CA per party, key only in the party's own ns Secret
+: > "$STUB_LOG"; WL="$T/wl"; mkdir -m 700 "$WL"
+out=$("$S" lensa-ca bank-b "$WL" 2>&1); rc=$?
+[[ $rc -eq 0 ]] && ok "lensa-ca bank-b succeeds" || fail "lensa-ca: rc=$rc $out"
+[[ $out != *"PRIVATE KEY"* ]] && ok "lensa-ca prints no key" || fail "lensa-ca printed a key"
+grep -q "create secret generic iroha3-lensa-ca -n rd-iroha3-bank-b" "$STUB_LOG" && grep -q "FILE ca.crt" "$STUB_LOG" && grep -q "FILE ca.key" "$STUB_LOG" && ok "Secret iroha3-lensa-ca (ca.crt, ca.key) created in rd-iroha3-bank-b by plain create" || fail "Secret not created: $(cat "$STUB_LOG")"
+[[ $(grep -c '^kubectl\|create secret' "$STUB_LOG") -eq 1 && $(grep -c 'FILE' "$STUB_LOG") -eq 2 ]] && ok "exactly ONE Secret with two files (no gateway-client-ca, no role/server CA)" || fail "unexpected calls: $(cat "$STUB_LOG")"
+LP="$WL/public/bank-b-lensa-ca.pem"
+[[ -s $LP ]] && ok "public bank-b-lensa-ca.pem written" || fail "missing $LP"
+! grep -q 'PRIVATE KEY' "$LP" && ok "the public PEM holds no private key" || fail "private key in the public PEM"
+txt=$(openssl x509 -in "$LP" -noout -text 2>/dev/null)
+[[ $txt == *"CA:TRUE"* && $txt == *"pathlen:0"* && $txt == *"iroha3-bank-b-lensa-ca"* ]] && ok "CA:TRUE, pathlen 0, subject CN=iroha3-bank-b-lensa-ca" || fail "lensa CA cert shape: $txt"
+[[ -z $(find "$WL" \( -name '*.key' -o -name '*.srl' \) 2>/dev/null) ]] && ok "lensa-ca: private keys shredded from the work dir" || fail "private material left in $WL"
+refuse "lensa-ca with a stray argument" "usage" lensa-ca bank-b "$WL" extra
+mkdir -m 700 "$T/wl2"; mkdir "$T/wl2/public"; refuse "lensa-ca on a work dir that already has public/" "fresh work dir" lensa-ca bank-b "$T/wl2"
+refuse "lensa-ca for an unknown party" "usage" lensa-ca nobody "$T/wl"
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
