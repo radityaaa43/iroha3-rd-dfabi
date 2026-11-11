@@ -14,7 +14,7 @@
   M2 aps.rs settle: abort on every non-finalized exit, not only prepare (abort is accepted after Prepare is registered:
   iroha_core global_state.rs plan_private_settlement_abort_v1 removes the bundle's staged locks unless a receipt exists).
   M3 auditor GET /records: serialize only the 7 fields the adapter uses; confirm the CNI enforces NetworkPolicy.
-  L1 receipt cache tmp name per pid; refetch on decode failure. L2 pool_init: write origin note before activation.
+  L1 receipt cache tmp name: random suffix, NOT pid (the driver is PID 1 in every container); refetch on decode failure (live race 2026-11-11, pools.rs:178; node-build PR #3). L2 pool_init: write origin note before activation.
   L3 checked_add for amount + reimbursement. L5 Lensa poolHeights()/journal: log or throw, atomic journal write (fe file).
   L4 closed: Cargo.lock holds one sha2 (0.10.9). Plan doc 03 is stale (wallet_json shape, test names).
 
