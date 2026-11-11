@@ -44,3 +44,30 @@ jobs:
       - name: "does the image carry the ivm libraries a generate needs?"
         run: |
           docker run --rm --entrypoint sh "$IMAGE" -c 'find / -maxdepth 4 \( -name "ivm_libs" -o -name "*.to" \) -not -path "/proc/*" 2>/dev/null | head -5' 2>&1 || echo "no sh in the image: rc=$?"
+      - name: "localnet genesis vs genesis generate default: instruction shape (throwaway, public data only)"
+        run: |
+          set +e
+          ln="$RUNNER_TEMP/ln"; mkdir -p "$ln" "$RUNNER_TEMP/gd"
+          docker run --rm --user "$(id -u):$(id -g)" -v "$ln:/work/out" --entrypoint kagami "$IMAGE" localnet \
+            --peers 4 --consensus-mode npos --chain-id 00000000-0000-4000-8000-000000000000 --out-dir /work/out >/dev/null 2>&1
+          echo "localnet rc=$?"
+          # the public mint-finality parameter file localnet wrote (it is a public roster, no seed)
+          pf=$(grep -rl '"epoch_roster"' "$ln" 2>/dev/null | head -3); echo "files holding epoch_roster:"; echo "$pf"
+          pf1=$(echo "$pf" | head -1)
+          shape() { jq -c '{tx: (.transactions|length), kinds: ([.transactions[].instructions[]? | if type=="object" then keys[0] else "norito" end] | group_by(.) | map({(.[0]): length}) | add), topology: [.transactions[].topology|length], params: (.transactions[0].parameters // {} | keys), custom: ([.transactions[].parameters.custom // {} | keys[]] | sort)}' "$1"; }
+          echo "--- localnet genesis.json shape"; shape "$ln/genesis.json"
+          if [ -n "$pf1" ]; then
+            cp "$pf1" "$RUNNER_TEMP/gd/params.json"
+            pub=$(cat "$RUNNER_TEMP/k/genesis/public.key")
+            for ivm in "." "/work/out/ivm"; do
+              echo "--- genesis generate default --ivm-dir $ivm"
+              docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP/gd:/work/out" --entrypoint kagami "$IMAGE" genesis generate \
+                --profile iroha3-dev --ivm-dir "$ivm" --genesis-public-key "$pub" \
+                --kagemusha-mint-finality-parameters /work/out/params.json --consensus-mode npos default > "$RUNNER_TEMP/gd/g.json" 2> "$RUNNER_TEMP/gd/err.txt"
+              echo "rc=$?"; head -5 "$RUNNER_TEMP/gd/err.txt"
+              [ -s "$RUNNER_TEMP/gd/g.json" ] && shape "$RUNNER_TEMP/gd/g.json" && break
+            done
+            echo "--- ivm_dir / libs in generated manifest"; jq -c '{ivm_dir: .ivm_dir, chain: .chain, consensus_mode: .consensus_mode}' "$RUNNER_TEMP/gd/g.json" 2>&1 | head -3
+            echo "--- has CanSetParameters grant / XOR asset def / lane-0 validators (generate default)"
+            jq -c '{canSetParams: ([.transactions[].instructions[]? | objects | select(.Grant.Permission.object.name=="CanSetParameters")]|length), xor: ([.transactions[].instructions[]? | objects | select(.Register.AssetDefinition.name=="XOR")]|length), lane0: ([.transactions[].instructions[]? | objects | select(has("RegisterPublicLaneValidator"))]|length)}' "$RUNNER_TEMP/gd/g.json" 2>&1 | head -3
+          fi
