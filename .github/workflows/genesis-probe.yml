@@ -17,14 +17,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: kagami help texts (flags, topology, mint-finality)
+      - name: "kagami help texts (flags, topology, mint-finality)"
         run: |
           docker pull -q "$IMAGE" >/dev/null
           k() { docker run --rm --entrypoint kagami "$IMAGE" "$@"; }
           for c in "--help" "keys --help" "genesis --help" "genesis generate --help" "genesis sign --help" "genesis materialize --help" "kagemusha --help" "localnet --help"; do
             echo "::group::kagami $c"; k $c 2>&1 || echo "rc=$?"; echo "::endgroup::"
           done
-      - name: throwaway keys (4 x BLS + PoP, 1 x genesis ed25519): sizes and public parts only
+      - name: "throwaway keys (4 x BLS + PoP, 1 x genesis ed25519), sizes and public parts only"
         run: |
           mkdir -p "$RUNNER_TEMP/k"
           k() { docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP/k:/work/out" --entrypoint kagami "$IMAGE" "$@"; }
@@ -33,7 +33,7 @@ jobs:
           for v in a b c d; do echo "v$v: public.key $(wc -c < "$RUNNER_TEMP/k/v$v/public.key") bytes, pop.hex $(wc -c < "$RUNNER_TEMP/k/v$v/pop.hex") bytes"; done
           echo "genesis public key: $(cat "$RUNNER_TEMP/k/genesis/public.key")"
           ls -l "$RUNNER_TEMP/k/va" | awk '{print $1, $9}'
-      - name: genesis generate without the mint-finality parameters (what does it demand?)
+      - name: "genesis generate without the mint-finality parameters (what does it demand?)"
         run: |
           set +e
           pub=$(cat "$RUNNER_TEMP/k/genesis/public.key")
@@ -41,6 +41,6 @@ jobs:
             --profile iroha3-dev --ivm-dir /work/out/ivm --genesis-public-key "$pub" \
             --kagemusha-mint-finality-parameters /work/out/none.json --consensus-mode npos default 2>&1 | head -20
           echo "rc=${PIPESTATUS[0]}"
-      - name: does the image carry the ivm libraries a generate needs?
+      - name: "does the image carry the ivm libraries a generate needs?"
         run: |
           docker run --rm --entrypoint sh "$IMAGE" -c 'find / -maxdepth 4 \( -name "ivm_libs" -o -name "*.to" \) -not -path "/proc/*" 2>/dev/null | head -5' 2>&1 || echo "no sh in the image: rc=$?"
