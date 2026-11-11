@@ -80,23 +80,25 @@ rm -rf "$T/out"
 env PUBLIC_DIR="$P" OUT_DIR="$T/out" GENESIS_PRIVATE_KEY_FILE="$T/signer.key" GENESIS_PUBLIC_KEY=PUB-genesis network/assemble.sh >"$T/aout" 2>&1; rc=$?
 if [[ $rc -eq 3 && $(cat "$T/aout") == *GAP* ]]; then ok "refuses without ASSEMBLE_ACCEPT_GAP (lane-validator overlay not ported)"; else fail "gap guard: rc=$rc $(cat "$T/aout")"; fi
 
-refuse() { # <label> <mutation run inside the public dir>
-  local label=$1; shift
+refuse() { # <label> <reason substring in assemble.sh's own message> <mutation run inside the public dir>
+  local label=$1 reason=$2; shift 2
   cp -r "$P" "$T/public.bak"; (cd "$P" && eval "$*")
   run; local rc=$?
   rm -rf "$P"; mv "$T/public.bak" "$P"
-  if [[ $rc -ne 0 ]]; then ok "refuses: $label"; else fail "accepted: $label"; fi
+  if [[ $rc -eq 2 && $(cat "$T/aout") == *"$reason"* ]]; then ok "refuses: $label"; else fail "not refused as expected: $label (rc=$rc: $(head -c 200 "$T/aout"))"; fi
 }
-refuse "missing peers.addr.json" 'rm peers.addr.json'
-refuse "3 peers instead of 4" 'jq "del(.[3])" peers.json > x && mv x peers.json'
-refuse "a peer without pop_hex" 'jq ".[0].pop_hex=\"\"" peers.json > x && mv x peers.json'
-refuse "bank-c without external address" 'jq "del(.\"bank-c\".external)" peers.addr.json > x && mv x peers.addr.json'
-refuse "missing bi-gov account" 'jq "del(.\"bi-gov\")" accounts.json > x && mv x accounts.json'
-refuse "missing mint-finality parameters" 'rm kagemusha-mint-finality-public.json'
-refuse "a seed file in the public dir" 'echo x > bi.seed'
-refuse "a private.key in the public dir" 'echo x > private.key'
-if run GENESIS_PRIVATE_KEY_FILE=/nonexistent; then fail "accepted a missing signer key"; else ok "refuses a missing signer key file"; fi
-if run GENESIS_PUBLIC_KEY=; then fail "accepted an empty GENESIS_PUBLIC_KEY"; else ok "refuses an empty GENESIS_PUBLIC_KEY"; fi
+refuse "missing peers.addr.json" "peers.addr.json" 'rm peers.addr.json'
+refuse "3 peers instead of 4" "4 peers" 'jq "del(.[3])" peers.json > x && mv x peers.json'
+refuse "a peer without pop_hex" "pop_hex" 'jq ".[0].pop_hex=\"\"" peers.json > x && mv x peers.json'
+refuse "bank-c without external address" "external" 'jq "del(.\"bank-c\".external)" peers.addr.json > x && mv x peers.addr.json'
+refuse "missing bi-gov account" "bi-gov" 'jq "del(.\"bi-gov\")" accounts.json > x && mv x accounts.json'
+refuse "missing mint-finality parameters" "mint-finality" 'rm kagemusha-mint-finality-public.json'
+refuse "a seed file in the public dir" "secret" 'echo x > bi.seed'
+refuse "a private.key in the public dir" "secret" 'echo x > private.key'
+run GENESIS_PRIVATE_KEY_FILE=/nonexistent; rc=$?
+if [[ $rc -eq 2 && $(cat "$T/aout") == *GENESIS_PRIVATE_KEY_FILE* ]]; then ok "refuses a missing signer key file"; else fail "signer key: rc=$rc $(cat "$T/aout")"; fi
+run GENESIS_PUBLIC_KEY=; rc=$?
+if [[ $rc -eq 2 && $(cat "$T/aout") == *GENESIS_PUBLIC_KEY* ]]; then ok "refuses an empty GENESIS_PUBLIC_KEY"; else fail "public key: rc=$rc $(cat "$T/aout")"; fi
 
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
