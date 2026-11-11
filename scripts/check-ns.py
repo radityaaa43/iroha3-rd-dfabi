@@ -32,11 +32,6 @@ else:
         want_cluster = "2" if what == "bank-c" else None
         if lab.get("cluster") != want_cluster:
             bad.append(f"namespace label cluster is {lab.get('cluster')!r}, want {want_cluster!r}")
-    np_ = need("NetworkPolicy", "default-deny-ingress")
-    if np_:
-        s = np_["spec"]
-        if s.get("podSelector") != {} or s.get("policyTypes") != ["Ingress"] or s.get("ingress"):
-            bad.append(f"default-deny-ingress needs an empty podSelector, policyTypes [Ingress], no rules: {s}")
     if nsonly:
         if len(docs) != 1 or docs[0]["kind"] != "Namespace":
             bad.append(f"--ns-only must emit exactly the Namespace doc, got {[d['kind'] for d in docs]}")
@@ -44,6 +39,11 @@ else:
             print(f"FAIL: {what}: {b}", file=sys.stderr)
         print(f"{'FAIL' if bad else 'ok:  '} {what} --ns-only: {len(docs)} object")
         sys.exit(1 if bad else 0)
+    np_ = need("NetworkPolicy", "default-deny-ingress")
+    if np_:
+        s = np_["spec"]
+        if s.get("podSelector") != {} or s.get("policyTypes") != ["Ingress"] or s.get("ingress"):
+            bad.append(f"default-deny-ingress needs an empty podSelector, policyTypes [Ingress], no rules: {s}")
     need("ServiceAccount", "party-admin")
     role = need("Role", "party-admin")
     if role:

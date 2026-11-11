@@ -7,6 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: rd-iroha3
     rd-iroha3/party: "@PARTY@"
+    @CLUSTER_LABEL@
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
