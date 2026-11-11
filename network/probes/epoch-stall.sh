@@ -111,8 +111,17 @@ end=$((SECONDS + SECS)); last=""
 while ((SECONDS < end)); do
   st=$(curl -s --max-time 4 http://127.0.0.1:18080/status)
   h=$(jq -r '.blocks // empty' <<<"$st" 2>/dev/null)
-  echo "t=$((SECS - (end - SECONDS)))s height=${h:-?} peers=$(jq -r '.peers // "?"' <<<"$st" 2>/dev/null) non_empty=$(jq -r '.blocks_non_empty // "?"' <<<"$st" 2>/dev/null)"
+  run=$(docker ps -q --filter name=probe-n | wc -l)
+  echo "t=$((SECS - (end - SECONDS)))s height=${h:-?} running=$run/4 peers=$(jq -r '.peers // "?"' <<<"$st" 2>/dev/null) non_empty=$(jq -r '.blocks_non_empty // "?"' <<<"$st" 2>/dev/null)"
   last=$h; sleep 5
+  # HOLD: after the height passes BOUNDARY, all 4 nodes must stay running for HOLD_PAST seconds
+  if [[ -n ${HOLD_PAST:-} && -n $h && $h -gt ${BOUNDARY:-20} ]]; then
+    : "${past_at:=$SECONDS}"
+    ((run < 4)) && hold_broken=1
+    if ((SECONDS - past_at >= HOLD_PAST)); then
+      echo "HOLD: height $h > ${BOUNDARY:-20} for $((SECONDS - past_at)) s, running=$run/4, broken=${hold_broken:-0}"; break
+    fi
+  fi
   # stop early: node0 unreachable for 60 s, or STOP_AT reached (row r2 needs only to pass the old epoch end)
   if [[ -z $h ]]; then miss=$((${miss:-0} + 1)); else miss=0; fi
   ((miss >= 12)) && { echo "node0 unreachable for 60 s: stopping"; break; }
@@ -133,3 +142,10 @@ for i in 0 1 2 3; do
   docker logs "probe-n$i" 2>&1 | grep -vE 'peer_monitor|alias|onboard|^\s*$|^Location|Connection refused|^Caused|^   [0-9]:' | tail -12 | sed -E 's/\{[^}]{60,}\}/{..}/g' | cut -c1-360
 done
 for i in 0 1 2 3; do docker rm -f "probe-n$i" >/dev/null 2>&1; done
+if [[ -n ${HOLD_PAST:-} ]]; then
+  if [[ -z ${past_at:-} ]]; then echo "VERDICT: HOLD NOT REACHED (height never passed ${BOUNDARY:-20})"; exit 1; fi
+  if [[ -n ${hold_broken:-} || ${run:-0} -lt 4 ]]; then echo "VERDICT: HOLD BROKEN (a node stopped after the boundary)"; exit 1; fi
+  echo "VERDICT: HOLD OK (4/4 running ${HOLD_PAST} s past height ${BOUNDARY:-20})"
+elif [[ -n ${STOP_AT:-} ]]; then
+  [[ ${last:-0} -ge $STOP_AT && ${run:-0} -eq 4 ]] && echo "VERDICT: 4/4 running at height $last (>= $STOP_AT)" || { echo "VERDICT: FAILED before height $STOP_AT (last=${last:-?} running=${run:-0}/4)"; exit 1; }
+fi
