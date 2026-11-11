@@ -48,7 +48,7 @@ spec:
               mountPath: /pvc
       containers:
         - name: iroha3d
-          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          image: ghcr.io/radityaaa43/iroha3-rd-node:bad-tag
           # Bypass the image's Taira entrypoint; same invocation network/check.sh validates.
           # --sora is required for the 3-lane Nexus config (irohad main.rs: SoraProfileRequired). The
           # DA store root it would default is set explicitly in peer.toml under /storage/state.
