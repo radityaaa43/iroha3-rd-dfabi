@@ -25,8 +25,8 @@ bad=$(jq -r '.[] | .metadata.name as $p | .spec.template.spec.volumes[]? | .secr
   | select(test("^(peer|client)-") and . != "peer-\($p)" and . != "client-\($p)") | "\($p) mounts \(.)"' <<<"$sts")
 [[ -z $bad ]] && ok "no cross-party Secret mounts" || fail "cross-party Secret mount: $bad"
 
-bad=$(jq -r '.[] | .metadata.name as $p | .spec.template.spec.containers[] | select(.image != "'"$IMAGE"'") | "\($p): \(.image)"' <<<"$sts")
-[[ -z $bad ]] && ok "image $IMAGE" || fail "wrong image: $bad"
+bad=$(jq -r '.[] | .metadata.name as $p | (.spec.template.spec.containers[], .spec.template.spec.initContainers[]?) | select(.image != "'"$IMAGE"'") | "\($p): \(.image)"' <<<"$sts")
+[[ -z $bad ]] && ok "image $IMAGE (containers + initContainers)" || fail "wrong image: $bad"
 
 bad=$(jq -r '.[] | select(.spec.template.spec.containers[0].args | index("--sora") | not) | .metadata.name' <<<"$sts")
 [[ -z $bad ]] && ok "iroha3d --sora (multi-lane needs it)" || fail "missing --sora: $bad"
