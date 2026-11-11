@@ -214,8 +214,10 @@ spec:
         - protocol: TCP
           port: 1337
 ---
-# Torii 8080: only the own namespace's gateway pods (S14). The operator's `kubectl port-forward` goes through the API
-# server and needs no rule.
+# Torii 8080: the own namespace's gateway pods (S14) and the PEER pods of exactly the namespaces of the same cluster: every
+# peer polls the other same-cluster peers' Torii for telemetry (`peer_telemetry_urls`, network/s5.py:361; Torii-side only, no
+# consensus effect). Namespace names + the pod label, never a wide selector (ANALYST Q4(d)). The operator's `kubectl
+# port-forward` goes through the API server and needs no rule.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -233,6 +235,16 @@ spec:
         - podSelector:
             matchLabels:
               rd-iroha3/role: gateway
+        # @TELEMETRY-BEGIN@
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [@TELEMETRY_NS@]
+          podSelector:
+            matchLabels:
+              rd-iroha3/role: peer
+        # @TELEMETRY-END@
       ports:
         - protocol: TCP
           port: 8080

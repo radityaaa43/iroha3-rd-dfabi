@@ -35,9 +35,13 @@ else
 fi
 [[ $hash8 =~ ^[0-9a-f]{8}$ ]] || { echo "render.sh: hash8 must be 8 lowercase hex chars" >&2; exit 2; }
 [[ $cidr =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ && $cidr != 0.0.0.0/32 ]] || { echo "render.sh: cidr must be a single IPv4 /32 like 203.0.113.10/32, never wider" >&2; exit 2; }
-sed -e "s|@PARTY@|$party|g" -e "s|@GENESIS_HASH8@|$hash8|g" -e "s|@BANKC_LB_CIDR@|$cidr|g" "$here/peer.yaml.tpl" |
+tel='"rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"' # the cluster-1 peers poll each other's Torii (telemetry); bank-c has none (below)
+sed -e "s|@TELEMETRY_NS@|$tel|g" -e "s|@PARTY@|$party|g" -e "s|@GENESIS_HASH8@|$hash8|g" -e "s|@BANKC_LB_CIDR@|$cidr|g" "$here/peer.yaml.tpl" |
   awk -v clb="$clb" '/^@CLB_HEALTH@$/ { if (clb) { print "        - ipBlock:"; print "            cidr: \"100.64.0.0/10\"" } next } { print }' |
   awk -v c2="$c2" '
+    /^        # @TELEMETRY-BEGIN@$/ { if (c2) skip_t = 1; next }
+    /^        # @TELEMETRY-END@$/ { skip_t = 0; next }
+    skip_t { next }
     !c2 { print; next }
     /^      priorityClassName:/ { next }
     /^        nodeAffinity:$/ { skip = 1; next }
