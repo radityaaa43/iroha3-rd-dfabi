@@ -51,7 +51,7 @@ python3 -I scripts/check-netpol-form.py "peers" <<<"$out" || fails=$((fails + 1)
 # R17 end step: peers-egress (--p2p-egress-cidr = the OTHER cluster's external LB /32 addresses, repeatable)
 BANKC_LB=43.106.70.123/32; C1_LBS=(147.139.197.22/32 147.139.195.93/32 8.215.12.88/32)
 for p in bi bank-a bank-b; do
-  out=$("$R" "$p" $H $CIDR --p2p-egress-cidr $BANKC_LB 2>&1) || { fail "$p --p2p-egress-cidr: render failed: $out"; continue; }
+  out=$("$R" --p2p-egress-cidr $BANKC_LB "$p" $H $CIDR 2>&1) || { fail "$p --p2p-egress-cidr: render failed: $out"; continue; }
   python3 -I scripts/check-peers.py "$p" $H $CIDR egress:$BANKC_LB <<<"$out" || fails=$((fails + 1))
   python3 -I scripts/check-netpol-form.py "peers-egress" <<<"$out" || fails=$((fails + 1))
 done
@@ -59,10 +59,10 @@ args=(); for c in "${C1_LBS[@]}"; do args+=(--p2p-egress-cidr "$c"); done
 out=$("$R" --cluster 2 "${args[@]}" bank-c $H $CIDR 2>&1) || fail "bank-c --p2p-egress-cidr: render failed: $out"
 python3 -I scripts/check-peers.py bank-c $H $CIDR c2 egress:$(IFS=,; echo "${C1_LBS[*]}") <<<"$out" || fails=$((fails + 1))
 python3 -I scripts/check-netpol-form.py "peers-egress-c2" <<<"$out" || fails=$((fails + 1))
-refuse "a /24 --p2p-egress-cidr" "/32" bi $H $CIDR --p2p-egress-cidr 203.0.113.0/24
-refuse "--p2p-egress-cidr without a value" "usage" bi $H $CIDR --p2p-egress-cidr
+refuse "a /24 --p2p-egress-cidr" "/32" --p2p-egress-cidr 203.0.113.0/24 bi $H $CIDR
+refuse "--p2p-egress-cidr without a value" "usage" --p2p-egress-cidr
 # MUTANTS of the rendered bi peers-egress policy: each must make the checker FAIL (extra destination, wildcard namespace, empty podSelector, extra port)
-good=$("$R" bi $H $CIDR --p2p-egress-cidr $BANKC_LB)
+good=$("$R" --p2p-egress-cidr $BANKC_LB bi $H $CIDR)
 mut() { # <label> <python expression on policy dict p>
   local m; m=$(python3 -I -c '
 import sys, json, yaml
