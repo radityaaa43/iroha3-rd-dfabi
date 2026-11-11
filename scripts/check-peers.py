@@ -5,6 +5,7 @@ import sys
 import yaml
 
 party, h8, cidr = sys.argv[1:4]
+clb = len(sys.argv) > 4 and sys.argv[4] == "clb"  # --clb-health-cidr 100.64.0.0/10 requested
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -69,11 +70,12 @@ if p2p:
     frm = ing[0]["from"] if ing else []
     ns_rule = [f for f in frm if "namespaceSelector" in f]
     ip_rule = [f for f in frm if "ipBlock" in f]
-    if not (ports_ok and len(frm) == 2 and len(ns_rule) == 1 and len(ip_rule) == 1
+    want_ips = [cidr] + (["100.64.0.0/10"] if clb else [])
+    if not (ports_ok and len(frm) == 1 + len(want_ips) and len(ns_rule) == 1
+            and [r["ipBlock"]["cidr"] for r in ip_rule] == want_ips
             and ns_rule[0]["namespaceSelector"]["matchLabels"] == {"app.kubernetes.io/part-of": "rd-iroha3"}
-            and ns_rule[0]["podSelector"]["matchLabels"] == {"rd-iroha3/role": "peer"}
-            and ip_rule[0]["ipBlock"]["cidr"] == cidr):
-        bad.append(f"peers-p2p must allow TCP 1337 from peer pods of rd-iroha3 namespaces and from {cidr} only: {ing}")
+            and ns_rule[0]["podSelector"]["matchLabels"] == {"rd-iroha3/role": "peer"}):
+        bad.append(f"peers-p2p must allow TCP 1337 from peer pods of rd-iroha3 namespaces and from {want_ips} only: {ing}")
     if p2p["spec"]["policyTypes"] != ["Ingress"]:
         bad.append("peers-p2p policyTypes")
 tor = need("NetworkPolicy", "peers-torii")

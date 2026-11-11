@@ -209,6 +209,7 @@ spec:
               rd-iroha3/role: peer
         - ipBlock:
             cidr: "@BANKC_LB_CIDR@"
+@CLB_HEALTH@
       ports:
         - protocol: TCP
           port: 1337
