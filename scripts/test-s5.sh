@@ -99,7 +99,12 @@ if [[ -n ${RUN_CHAIN:-} ]] && (( fails == 0 )); then
   seen=$(curl -s --max-time 4 http://127.0.0.1:18080/status | jq -r '.peers // "?"')
   if ((h >= 3)); then ok "4 peers from the signed genesis commit blocks: height $h, peers seen by bi: $seen"; else
     fail "no progress: height $h"
-    for p in bi bank-a; do echo "-- s5-$p"; docker logs "s5-$p" 2>&1 | grep -E ' (ERROR|WARN) ' | grep -v 'peer_monitor' | tail -6 | cut -c1-300; done
+    for p in bi bank-b; do
+      echo "-- s5-$p: first 25 WARN/ERROR lines (noise filtered)"
+      docker logs "s5-$p" 2>&1 | grep -E ' (ERROR|WARN) ' | grep -vE 'peer_monitor|alias|onboard' | sed -E 's/HeightContextId\(\{[^}]*\}\)/HCID/g; s/\{[^}]{80,}\}/{..}/g' | head -25 | cut -c1-420
+      echo "-- s5-$p: lines mentioning view / lane / beacon / mint"
+      docker logs "s5-$p" 2>&1 | grep -iE 'view change|new view|fastpq|beacon|mint.finality|lane validator' | sed -E 's/HeightContextId\(\{[^}]*\}\)/HCID/g; s/\{[^}]{80,}\}/{..}/g' | head -12 | cut -c1-420
+    done
   fi
 fi
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
