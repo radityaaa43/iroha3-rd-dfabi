@@ -11,8 +11,8 @@ ns = "rd-iroha3-bi"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 bad = []
-want = {("ConfigMap", "pool-init-config"), ("PersistentVolumeClaim", "pools-index"), ("Job", "pool-init")}
-if set(by) != want or len(docs) != 3:
+want = {("ConfigMap", "pool-init-config"), ("PersistentVolumeClaim", "pools-index"), ("Job", "pool-init"), ("NetworkPolicy", "pool-init-egress")}
+if set(by) != want or len(docs) != 4:
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)}")
 for (k, n), d in by.items():
     if d["metadata"].get("namespace") != ns:
@@ -64,6 +64,7 @@ if job:
         "imagePullSecret ghcr-pull": pod.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "no token": pod["automountServiceAccountToken"] is False,
         "role label pool-init": s["template"]["metadata"]["labels"].get("rd-iroha3/role") == "pool-init",
+        "label rd/egress-locked=true (key-mounting Job: R17 held until its own Egress policy exists)": s["template"]["metadata"]["labels"].get("rd/egress-locked") == "true",
         "non-root": pod["securityContext"].get("runAsNonRoot") is True and pod["securityContext"].get("runAsUser") == 1001,
         "container hardening": c["securityContext"].get("allowPrivilegeEscalation") is False and c["securityContext"].get("readOnlyRootFilesystem") is True
         and c["securityContext"].get("capabilities", {}).get("drop") == ["ALL"],
@@ -94,6 +95,28 @@ if job:
     for m in c["volumeMounts"]:
         if m["name"] not in ("work", "pools") and m.get("readOnly") is not True:
             bad.append(f"mount {m['name']} must be read-only")
+
+# The Job mounts the bi-gov seed: its OWN narrow Egress policy (own Torii, the three gateways on 8443, DNS), selected by the rd/egress-locked label.
+np = by.get(("NetworkPolicy", "pool-init-egress"))
+if np:
+    sp = np["spec"]
+    gw = lambda p: {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{p}"}},
+                    "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
+    want_eg = [
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+         "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+        {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": "bi"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+        {"to": [gw(p) for p in ("bi", "bank-a", "bank-b")], "ports": [{"protocol": "TCP", "port": 8443}]},
+    ]
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "pool-init", "rd/egress-locked": "true"}}:
+        bad.append(f"NetworkPolicy pool-init-egress podSelector: {sp.get('podSelector')}")
+    if sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"NetworkPolicy pool-init-egress must be Egress-only: {sp.get('policyTypes')}")
+    if sp.get("egress") != want_eg:
+        bad.append(f"NetworkPolicy pool-init-egress egress rules differ: {json.dumps(sp.get('egress'))}")
+    if "ipBlock" in json.dumps(sp):
+        bad.append("NetworkPolicy pool-init-egress: no ipBlock (no open internet egress)")
 
 if bad:
     print("\n".join(f"FAIL: pool-init: {b}" for b in bad), file=sys.stderr)
