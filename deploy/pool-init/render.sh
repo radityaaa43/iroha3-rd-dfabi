@@ -7,6 +7,8 @@
 # `[audit] min_approvals = 2` over the three gateways (bi, bank-a, bank-b; mutual TLS from Secret iroha3-client-cert, pinned server CAs
 # from the EXISTING ConfigMap gateway-server-cas of `driver/render.sh --audit-tls`). bi.note (only that key of Secret bi-keys) is the BI
 # note secret the pool funding needs; the BI seed and the auditor keys are never mounted. backoffLimit 0: a failed run is NOT retried.
+# NetworkPolicy pool-init-egress (R17, key-mounting Job): the Job carries rd/egress-locked=true and may reach ONLY cluster DNS, BI's own Torii (8080)
+# and the three gateways (8443); everything else is denied (our namespaces have no allow-all egress policy to exclude it from).
 # PVC pools-index (1Gi) holds pools.json (public data, single writer = BI; S15 reuses it). Reserves are explicit amounts, no default.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)

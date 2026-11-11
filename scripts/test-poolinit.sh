@@ -24,6 +24,11 @@ refuse "a reserve above u64" "reserve" "$D" "$P" 99999999999999999999999 100
 mkdir "$T/p3"; cp "$P"/* "$T/p3/"; : > "$T/p3/x.seed"; refuse "a public dir holding a seed" "private material" "$D" "$T/p3" 1000 100
 out=$("$R" "$D" "$P" 1000 100 2>&1) || fail "render failed: $out"
 python3 -I scripts/check-poolinit.py "$D" "$H8" "$CHAIN" 1000 100 <<<"$out" || fails=$((fails + 1))
+# a key-mounting Job WITHOUT the rd/egress-locked label (or without its Egress policy) must FAIL the checker
+nolabel=$(grep -v 'rd/egress-locked' <<<"$out")
+python3 -I scripts/check-poolinit.py "$D" "$H8" "$CHAIN" 1000 100 <<<"$nolabel" >/dev/null 2>&1 && fail "a Job without rd/egress-locked passed the checker" || ok "a key-mounting Job without the rd/egress-locked label FAILS the checker"
+nopolicy=$(python3 -I -c 'import sys,json; d=sys.stdin.read().split("\n---\n"); print("\n---\n".join(x for x in d if "pool-init-egress" not in x))' <<<"$out")
+python3 -I scripts/check-poolinit.py "$D" "$H8" "$CHAIN" 1000 100 <<<"$nopolicy" >/dev/null 2>&1 && fail "a Job without its Egress policy passed the checker" || ok "a Job without its own Egress policy FAILS the checker"
 a=$("$R" "$D" "$P" 1000 100); b=$("$R" "$D" "$P" 1000 100)
 [[ -n $a && $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs or is empty"
 before=$(find "$T" -type f | sort | xargs cksum)
