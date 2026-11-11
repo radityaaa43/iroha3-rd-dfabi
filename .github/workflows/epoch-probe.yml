@@ -1,0 +1,26 @@
+name: epoch-probe
+# Diagnostic, not a gate: throwaway chain, 4 stock iroha3d containers, no secrets, no cluster. Design: network/probes/epoch-stall.md.
+on:
+  pull_request:
+    paths: ['network/probes/**', '.github/workflows/epoch-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  IMAGE: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        row: [r1, r2, r3, r4]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: "row ${{ matrix.row }}"
+        run: |
+          docker pull -q "$IMAGE" >/dev/null
+          L=1152921504606846976 SECS=150 WORK="$RUNNER_TEMP/w" bash network/probes/epoch-stall.sh "${{ matrix.row }}"
