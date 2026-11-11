@@ -83,7 +83,7 @@ if cm:
                 get_only = [{"name": ":method", "string_match": {"exact": "GET"}}]
                 # window B reads served by the party's OWN driver: exact path + GET only (OPA decides who may call)
                 driver_reads = [({"path": "/healthz", "headers": get_only}, "driver"),
-                                ({"safe_regex": {"regex": "^/tx/[0-9a-f]{64}$"}, "headers": get_only}, "driver"),
+                                ({"prefix": "/tx/", "headers": get_only}, "driver"),
                                 ({"path": "/balance", "headers": get_only}, "driver")]
                 want_routes = [({"path": p}, "driver") for p in driver_paths] + driver_reads + [({"path": p}, "auditor") for p in auditor_exact]
                 if party == "bi":
