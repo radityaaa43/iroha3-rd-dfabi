@@ -18,7 +18,7 @@
   L3 checked_add for amount + reimbursement. L5 Lensa poolHeights()/journal: log or throw, atomic journal write (fe file).
   L4 closed: Cargo.lock holds one sha2 (0.10.9). Plan doc 03 is stale (wallet_json shape, test names).
 
-## Component provenance (ASK from lead, 2026-11-10; local, uncommitted)
+## Component provenance (ASK from lead, 2026-11-10)
 
 Pin: `hyperledger-iroha/iroha@071e281e778c5928cab4d6e007b7ddc9b050df27` (below: `iroha@071e281e:path:line`).
 Ours: driver = `radityaaa43/iroha3-rd-node-build@d928b6e` `driver/src/*` (3,255 lines); Lensa = `rd-lensa-frontend`
