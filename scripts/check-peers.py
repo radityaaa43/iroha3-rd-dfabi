@@ -39,6 +39,17 @@ if sts:
         "genesis configmap": any(v.get("configMap", {}).get("name") == f"genesis-{h8}" for v in pod["volumes"]),
         "pvc 5Gi essd": s["volumeClaimTemplates"][0]["spec"]["storageClassName"] == "alicloud-essd-wffc"
         and s["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"] == "5Gi",
+        "init resources": all(k in pod["initContainers"][0].get("resources", {}) for k in ("requests", "limits")),
+        "excluded nodes": any(
+            e.get("key") == "kubernetes.io/hostname" and e.get("operator") == "NotIn"
+            and sorted(e.get("values", [])) == ["member-16033-node", "member-16034-node"]
+            for t in pod.get("affinity", {}).get("nodeAffinity", {}).get("requiredDuringSchedulingIgnoredDuringExecution", {}).get("nodeSelectorTerms", [])
+            for e in t.get("matchExpressions", [])),
+        "soft anti-affinity across rd-iroha3 namespaces": any(
+            t.get("podAffinityTerm", {}).get("topologyKey") == "kubernetes.io/hostname"
+            and t["podAffinityTerm"].get("labelSelector", {}).get("matchLabels") == {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/role": "peer"}
+            and t["podAffinityTerm"].get("namespaceSelector", {}).get("matchLabels") == {"app.kubernetes.io/part-of": "rd-iroha3"}
+            for t in pod.get("affinity", {}).get("podAntiAffinity", {}).get("preferredDuringSchedulingIgnoredDuringExecution", [])),
         "no token": pod["automountServiceAccountToken"] is False,
         "role label": s["template"]["metadata"]["labels"].get("rd-iroha3/role") == "peer"
         and s["template"]["metadata"]["labels"].get("rd-iroha3/party") == party,
