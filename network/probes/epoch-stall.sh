@@ -26,7 +26,11 @@ n = 0
 for tx in g["transactions"]:
     c = (tx.get("parameters") or {}).get("custom") or {}
     if "sumeragi_npos_parameters" in c:
-        c["sumeragi_npos_parameters"]["payload"]["epoch_length_blocks"] = el
+        pl = c["sumeragi_npos_parameters"]["payload"]
+        pl["epoch_length_blocks"] = el
+        # evidence_horizon + slashing_delay must not exceed 3 epoch lengths (iroha_data_model parameter/system.rs:538-546)
+        for f in ("evidence_horizon_blocks", "slashing_delay_blocks"):
+            pl[f] = min(pl[f], el)
         n += 1
 assert n == 1, "expected exactly one sumeragi_npos_parameters"
 json.dump(g, open(path, "w"), indent=2)
@@ -39,7 +43,11 @@ PY
   mv "$ln/new.signed.nrt" "$ln/genesis.signed.nrt"; mv "$ln/new.expected_hash" "$ln/genesis.expected_hash"
   echo "genesis re-signed with epoch_length_blocks=$EL"
 fi
+for i in 0 1 2 3; do
+  grep -q '^\[nexus.storage\]' "$ln/peer$i.toml" || printf '\n[nexus.storage]\nlocal_budget_bytes = 1073741824\n' >> "$ln/peer$i.toml"
+done
 sora=()
+[[ $mode == npos ]] && sora=(--sora)
 if [[ $row == r4 ]]; then
   # our 3-lane / 3-dataspace catalog and routing policy on peer0 only (merge logic as network/generate.sh)
   python3 -I - "$ln/peer0.toml" "$HERE/../nexus.toml" <<'PY' || exit 1
@@ -90,13 +98,13 @@ sleep 20
 cli() { docker run --rm --user "$U" --network host -v "$W:/work/out" --entrypoint iroha "$IMAGE" -c /work/out/ln/client.toml "$@"; }
 echo "-- containers:"; docker ps -a --format '{{.Names}} {{.Status}}'
 echo "-- node0 log tail:"; docker logs probe-n0 2>&1 | tail -6 | cut -c1-300
-echo "-- ops sumeragi status:"; cli ops sumeragi status 2>&1 | head -c 700; echo
+for path in /status /v1/status /metrics; do echo "-- GET $path:"; curl -s --max-time 5 "http://127.0.0.1:18080$path" | head -c 500; echo; done
 echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authority 2>&1 | head -c 600; echo
 (while :; do cli ledger transaction ping --msg probe --fee-payer authority >/dev/null 2>&1; sleep 1; done) &
 traffic=$!
 end=$((SECONDS + SECS)); last=""
 while ((SECONDS < end)); do
-  h=$(cli ops sumeragi status 2>/dev/null | jq -r '.. | objects | select(has("height")) | .height' 2>/dev/null | sort -n | tail -1)
+  h=$(curl -s --max-time 4 http://127.0.0.1:18080/status | jq -r '.blocks // .block_height // empty' 2>/dev/null)
   echo "t=$((SECS - (end - SECONDS)))s height=${h:-?}"
   last=$h; sleep 5
 done
