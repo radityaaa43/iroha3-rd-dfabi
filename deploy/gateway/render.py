@@ -42,6 +42,13 @@ per_route = {AUTHZ: {"@type": "type.googleapis.com/envoy.extensions.filters.http
 driver_paths = ["/settle-grant", "/dvp-native"] + (["/mint"] if party == "bi" else [])
 routes = [{"match": {"path": p}, "route": {"cluster": "driver", "timeout": "330s"}, "typed_per_filter_config": per_route}
           for p in driver_paths]
+# The party's OWN auditor (S12/S13 transport A): other parties reach it only through this gateway. The auditor's code route names:
+# /keys (GET), /approve (POST; a leg approval can take a while), and on BI /records, /records/{bundle} (BI lens). Every auditor error is
+# HTTP 500 by design (driver/src/auditor.rs); OPA decides who may call what.
+auditor_exact = [("/keys", "60s"), ("/approve", "120s")] + ([("/records", "60s")] if party == "bi" else [])
+routes += [{"match": {"path": p}, "route": {"cluster": "auditor", "timeout": to}, "typed_per_filter_config": per_route} for p, to in auditor_exact]
+if party == "bi":
+    routes.append({"match": {"prefix": "/records/"}, "route": {"cluster": "auditor", "timeout": "60s"}, "typed_per_filter_config": per_route})
 routes.append({"match": {"prefix": "/"}, "route": {"cluster": "torii", "timeout": "60s"}, "typed_per_filter_config": per_route})
 
 
@@ -91,6 +98,7 @@ envoy = {
         "clusters": [
             dns_cluster("torii", f"{party}-0.{party}.{ns}.svc.cluster.local", 8080),
             dns_cluster("driver", f"driver.{ns}.svc.cluster.local", 8091),
+            dns_cluster("auditor", f"auditor.{ns}.svc.cluster.local", 8090),
             {"name": "opa", "type": "STATIC", "connect_timeout": "1s",
              "typed_extension_protocol_options": {"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
                  "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
