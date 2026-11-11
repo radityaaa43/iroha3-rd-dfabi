@@ -62,3 +62,9 @@ delete the pod, and hand the two addresses to qa as a PRE input. Each address be
 ## 8. Secret `bi-auditor-key` (S4)
 `deploy/ns/auditor-secret.sh` uses plain `kubectl create` with the BI party credential. The party-admin Role has no secrets `get`, so `apply` and `--dry-run` are Forbidden.
 A re-run fails with AlreadyExists and changes nothing. Rotation is a separate `replace` step, written when a rotation is ordered.
+
+## 9. S7 apply helpers
+`deploy/peers/peer-secret.sh <party> <peer.toml> <mint-finality.seed>` creates Secret `peer-<party>` in `rd-iroha3-<party>` with that party's own kubeconfig (plain `create`; re-run = AlreadyExists).
+It refuses files that are not mode 600, a seed that is not 32 bytes, files inside a git checkout, a `peer.toml` missing a secret key name or still holding an `@...@` placeholder.
+`deploy/peers/genesis-cm.sh <party> <network/public>` only PRINTS the immutable ConfigMap `genesis-<hash8>`; the operator pipes it to `kubectl apply -f -` with the ADMIN kubeconfig (ConfigMaps are outside the party-admin Role).
+Offline tests: `scripts/test-peer-secret.sh`, `scripts/test-genesis-cm.sh`.
