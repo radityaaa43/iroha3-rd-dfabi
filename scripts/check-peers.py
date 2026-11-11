@@ -115,8 +115,8 @@ if len(docs) != want_n:
 for b in bad:
     print(f"FAIL: {party}: {b}", file=sys.stderr)
 # R17 end step: the LIVE peers get ONE narrow Egress policy (only with --p2p-egress-cidr). Ports/destinations from the peer config: P2P bind 1337 and Torii bind 8080
-# (network/check.sh:72-73), trusted_peers = same-cluster peers by cluster DNS, the other cluster by its external LB address (network/s5.py:351-353,361: telemetry URLs of the
-# same-cluster peers only, port 8080; network/s5.py:371-376), DNS by selector. NTS time sampling is peer-to-peer over the same sockets (iroha_config user.rs Nts), no external server.
+# (network/check.sh:72-73), trusted_peers = same-cluster peers by cluster DNS, the other cluster by its external LB address (network/s5.py:351-353,360-361: trusted_peers + telemetry URLs of the
+# same-cluster peers only, port 8080; public_address :370), DNS by selector. NTS time sampling is peer-to-peer over the same sockets (iroha_config user.rs Nts), no external server.
 eg = by.get(("NetworkPolicy", "peers-egress"))
 if not egress_cidrs:
     if eg is not None:
