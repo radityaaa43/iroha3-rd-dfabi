@@ -15,13 +15,17 @@ plugins:
     addr: 127.0.0.1:9191
     path: gw/allow
 keys:
-  bank:
+  bi: &k
     algorithm: RS256
     key: |
       -----BEGIN PUBLIC KEY-----
       MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
       -----END PUBLIC KEY-----
+  bank-a: *k
+  bank-b: *k
+  bank-c: *k
 EOF
+sed 's/^  bank-a: \*k$/  other: *k/' "$T/opa.yaml" > "$T/opa-nokey-for-a.yaml"
 sed 's/PUBLIC KEY/PRIVATE KEY/' "$T/opa.yaml" > "$T/opa-private.yaml"
 printf 'plugins: {}\n' > "$T/opa-nokeys.yaml"
 ACL=acl-d9ji5nwbqutwulof33ydb
@@ -40,6 +44,7 @@ refuse "an opa tag instead of a digest" "digest" bi --envoy-image "$EI" --opa-im
 refuse "a missing opa config" "opa-config" bi --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/none.yaml"
 refuse "an opa config with a private key" "private key" bi --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa-private.yaml"
 refuse "an opa config without keys and plugin" "keys" bi --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa-nokeys.yaml"
+refuse "an opa config whose keys block lacks the party id (bundle signing keyid = party)" "bank-a" bank-a --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa-nokey-for-a.yaml"
 refuse "bank-c on cluster 1" "cluster" bank-c "${base[@]}" --cluster 1
 refuse "bi on cluster 2" "cluster" bi "${base[@]}" --cluster 2
 refuse "cluster 2 without --lb-acl" "lb-acl" bank-c "${base[@]}" --cluster 2 --lb-range 47.237.84.150/32
