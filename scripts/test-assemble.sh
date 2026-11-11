@@ -71,6 +71,13 @@ sign=$(grep '^kagami genesis sign' "$STUB_LOG" || true); gen=$(grep '^kagami gen
 for f in --topology --private-key-file --expected-public-key --out-file --expected-hash-out; do [[ $sign == *"$f"* ]] || fail "genesis sign lacks $f"; done
 if [[ $(grep -o -- '--peer-pop' <<<"$sign" | wc -l) -eq 4 ]]; then ok "genesis sign gets 4 --peer-pop"; else fail "genesis sign --peer-pop count: $sign"; fi
 [[ $sign == *"--peer-pop PUB-validator-bi=POP-validator-bi"* ]] || fail "peer-pop is not PK=POP"
+# probe log (genesis-probe run 43006538345): `--topology` is "JSON-serialized vector of PeerId", the PoPs travel in --peer-pop
+topo=$(sed -E 's/.*--topology ([^ ]+) .*/\1/' <<<"$sign")
+if jq -e 'type == "array" and all(type == "string") and (sort == ["PUB-validator-bank-a","PUB-validator-bank-b","PUB-validator-bank-c","PUB-validator-bi"])' <<<"$topo" >/dev/null 2>&1; then
+  ok "--topology is a vector of the 4 public keys (no pop objects)"
+else
+  fail "--topology shape: $topo"
+fi
 if [[ $gen == *"--kagemusha-mint-finality-parameters"* && $gen == *"--genesis-public-key PUB-genesis"* ]]; then ok "genesis generate gets the mint-finality parameters and the genesis public key"; else fail "generate args: $gen"; fi
 if [[ -s $T/out/genesis.signed.nrt && -s $T/out/genesis.expected_hash ]]; then ok "outputs: genesis.signed.nrt, genesis.expected_hash"; else fail "outputs missing in $T/out"; fi
 if grep -rl 'PRIVATE-MARKER' "$T/out" "$T/aout" >/dev/null 2>&1; then fail "private key material reached the output dir or stdout"; fi
