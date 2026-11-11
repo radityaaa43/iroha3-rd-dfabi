@@ -163,8 +163,9 @@ else:
     # Only behind an EXISTING whitelist ACL (Alibaba CLB: loadBalancerSourceRanges alone creates none, see deploy/p2p).
     p = "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-"
     docs.append({"apiVersion": "v1", "kind": "Service",
-                 "metadata": meta("gateway-lb", {"annotations": {p + "acl-status": "on", p + "acl-type": "white", p + "acl-id": acl}}),
-                 "spec": {"type": "LoadBalancer", "externalTrafficPolicy": "Local", "loadBalancerSourceRanges": ranges, "selector": role,
+                 "metadata": meta("gateway-lb", {"annotations": {p + "acl-status": "on", p + "acl-type": "white", p + "acl-id": acl,
+                                                                "service.beta.kubernetes.io/backend-type": "eni"}}),
+                 "spec": {"type": "LoadBalancer", "externalTrafficPolicy": "Cluster", "loadBalancerSourceRanges": ranges, "selector": role,
                           "ports": [{"name": "https", "port": 8443, "targetPort": 8443, "protocol": "TCP"}]}})
 docs.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("gateway-ingress"),
              "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "gateway"}}, "policyTypes": ["Ingress"],
