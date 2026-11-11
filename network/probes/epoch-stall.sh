@@ -3,7 +3,7 @@
 # network, no secrets, no cluster. Usage: epoch-stall.sh r1|r2|r3|r4   Env: IMAGE (required), L (r2 epoch length),
 # SECS (observation time, default 150), WORK (scratch dir). Prints one height line per sample and the decisive log lines.
 set -uo pipefail
-row=${1:?usage: epoch-stall.sh r1|r2|r3|r4}
+row=${1:?usage: epoch-stall.sh r0|r1|r2|r3|r4}
 IMAGE=${IMAGE:?IMAGE is required}
 L=${L:-1152921504606846976}
 SECS=${SECS:-150}
@@ -12,7 +12,7 @@ W=${WORK:-$(mktemp -d)}; mkdir -p "$W"; chmod 700 "$W"
 U="$(id -u):$(id -g)"
 k() { docker run --rm --user "$U" -v "$W:/work/out" --entrypoint kagami "$IMAGE" "$@"; }
 mode=npos; case $row in r3 | r4) mode=permissioned ;; esac
-case $row in r1) EL=20 ;; r2) EL=$L ;; r3 | r4) EL="" ;; *) echo "unknown row $row" >&2; exit 2 ;; esac
+case $row in r1) EL=20 ;; r2) EL=$L ;; r0 | r3 | r4) EL="" ;; *) echo "unknown row $row" >&2; exit 2 ;; esac
 echo "== row $row: consensus $mode, epoch_length_blocks ${EL:-n/a}"
 k localnet --peers 4 --consensus-mode "$mode" --chain-id 00000000-0000-4000-8000-000000000a01 \
   --base-api-port 18080 --base-p2p-port 11337 --out-dir /work/out/ln >/dev/null || { echo "localnet failed" >&2; exit 1; }
@@ -109,11 +109,13 @@ echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authori
 traffic=$!
 end=$((SECONDS + SECS)); last=""
 while ((SECONDS < end)); do
-  h=$(curl -s --max-time 4 http://127.0.0.1:18080/status | jq -r '.blocks // .block_height // empty' 2>/dev/null)
-  echo "t=$((SECS - (end - SECONDS)))s height=${h:-?}"
+  st=$(curl -s --max-time 4 http://127.0.0.1:18080/status)
+  h=$(jq -r '.blocks // empty' <<<"$st" 2>/dev/null)
+  echo "t=$((SECS - (end - SECONDS)))s height=${h:-?} peers=$(jq -r '.peers // "?"' <<<"$st" 2>/dev/null) non_empty=$(jq -r '.blocks_non_empty // "?"' <<<"$st" 2>/dev/null)"
   last=$h; sleep 5
 done
 kill "$traffic" 2>/dev/null
 echo "-- final height ${last:-?}; decisive log lines (node0):"
-docker logs probe-n0 2>&1 | grep -iE 'Pasta|epoch authority|MissingNext|epoch.*(end|boundary)|requires a provisioned' | sort -u | head -8 | cut -c1-400
+for i in 0 1 2 3; do echo "node$i:"; docker logs "probe-n$i" 2>&1 | grep -iE 'MissingNextKagemushaMintFinalityEpochId|requires a provisioned Pasta epoch authority|Kagemusha V1 top-up or epoch-boundary' | sort -u | head -3 | cut -c1-400; done
+echo "-- node0 WARN/ERROR sample (not peer_monitor noise):"; docker logs probe-n0 2>&1 | grep -E ' (WARN|ERROR) ' | grep -v 'peer_monitor\|alias\|onboard' | tail -8 | cut -c1-300
 for i in 0 1 2 3; do docker rm -f "probe-n$i" >/dev/null 2>&1; done
