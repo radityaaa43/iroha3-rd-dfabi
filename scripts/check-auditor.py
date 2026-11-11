@@ -22,7 +22,7 @@ def need(kind, name):
 
 
 want = {("ConfigMap", "auditor-config"), ("PersistentVolumeClaim", "audit-store"), ("Deployment", "auditor"), ("Service", "auditor"),
-        ("NetworkPolicy", "auditor-ingress")}
+        ("NetworkPolicy", "auditor-ingress"), ("NetworkPolicy", "auditor-egress")}
 if set(by) != want or len(docs) != len(want):
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)} ({len(docs)} documents)")
 for (k, n), d in by.items():
@@ -108,6 +108,24 @@ if np:
         bad.append("NetworkPolicy auditor-ingress: selector role=auditor, Ingress only")
     if np["spec"]["ingress"] != [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}], "ports": [{"protocol": "TCP", "port": 8090}]}]:
         bad.append(f"NetworkPolicy auditor-ingress: TCP 8090 from the own gateway pods ONLY: {np['spec']['ingress']}")
+
+# R17 precondition of the apply: the key-holding auditor gets its own narrow Egress policy (DNS + its own party's Torii; approvals arrive INBOUND
+# through the gateway, so no cross-party or internet egress).
+eg = need("NetworkPolicy", "auditor-egress")
+if eg:
+    sp = eg["spec"]
+    want_eg = [
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+         "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+        {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+    ]
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "auditor"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"NetworkPolicy auditor-egress: selector role=auditor, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+    if sp.get("egress") != want_eg:
+        bad.append(f"NetworkPolicy auditor-egress: only DNS + own Torii 8080: {json.dumps(sp.get('egress'))}")
+    if "ipBlock" in json.dumps(sp):
+        bad.append("NetworkPolicy auditor-egress: no ipBlock")
 
 if bad:
     print("\n".join(f"FAIL: {party}: {b}" for b in bad), file=sys.stderr)

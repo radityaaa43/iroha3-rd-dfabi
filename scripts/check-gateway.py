@@ -21,7 +21,7 @@ def need(kind, name):
 
 
 want = {("ConfigMap", "gateway-envoy"), ("ConfigMap", "gateway-opa"), ("Deployment", "gateway"), ("Service", "gateway"),
-        ("NetworkPolicy", "gateway-ingress")}
+        ("NetworkPolicy", "gateway-ingress"), ("NetworkPolicy", "gateway-egress")}
 want |= {("Service", "gateway-ext")} if cluster == "1" else set()
 want |= {("Service", "gateway-lb")} if (cluster == "2" or lbmode) else set()
 if set(by) != want or len(docs) != len(want):
@@ -203,6 +203,29 @@ if cluster == "2" or lbmode:
             bad.append(f"Service gateway-lb: externalTrafficPolicy must be Cluster, got {lb['spec'].get('externalTrafficPolicy')}")
         if an.get("service.beta.kubernetes.io/backend-type") != "eni":
             bad.append("Service gateway-lb: annotation service.beta.kubernetes.io/backend-type: eni missing")
+
+# R17 precondition of the apply: the key-holding gateway (tls.key) gets its own narrow Egress policy.
+ge = need("NetworkPolicy", "gateway-egress")
+if ge:
+    sp = ge["spec"]
+    peer = {"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}
+    want_eg = [
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+         "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+        {"to": [peer], "ports": [{"protocol": "TCP", "port": 8080}]},
+        {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}}], "ports": [{"protocol": "TCP", "port": 8091}]},
+        {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}}], "ports": [{"protocol": "TCP", "port": 8090}]},
+        # OPA pulls its signed bundles from the SAME party's bundle-server pods (POD port 8080; the Service port 80 is DNAT-ed to it; never the 8081 sink)
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-zeto-{party}"}},
+                 "podSelector": {"matchLabels": {"app": "bundle-server"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+    ]
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "gateway"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"NetworkPolicy gateway-egress: selector role=gateway, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+    if sp.get("egress") != want_eg:
+        bad.append(f"NetworkPolicy gateway-egress: DNS, own Torii 8080, own driver 8091, own auditor 8090, own bundle-server 8080 only: {json.dumps(sp.get('egress'))}")
+    if "ipBlock" in json.dumps(sp) or "8081" in json.dumps(sp):
+        bad.append("NetworkPolicy gateway-egress: no ipBlock, never the 8081 sink")
 
 np = need("NetworkPolicy", "gateway-ingress")
 if np:
