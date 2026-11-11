@@ -1,0 +1,28 @@
+name: ci
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  manifests:
+    # Hosted runner on purpose: no cluster, no secrets, no kubeconfig.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Offline kubectl shim
+        # scripts/check-manifests.sh runs unchanged. It needs `kubectl kustomize` (offline, real binary)
+        # and `kubectl create --dry-run=client -o json` (needs API discovery). The shim replaces only
+        # the second with yq's multi-doc YAML -> JSON. Any other kubectl call fails loudly.
+        run: |
+          real=$(command -v kubectl)
+          mkdir "$RUNNER_TEMP/shim"
+          cat > "$RUNNER_TEMP/shim/kubectl" <<SHIM
+          #!/usr/bin/env bash
+          case \$1 in
+            kustomize) exec $real "\$@" ;;
+            create) exec yq -o=json -I=0 . ;;
+            *) echo "kubectl shim: unsupported: \$*" >&2; exit 2 ;;
+          esac
+          SHIM
+          chmod +x "$RUNNER_TEMP/shim/kubectl"
+          echo "$RUNNER_TEMP/shim" >> "$GITHUB_PATH"
+      - run: bash scripts/check-manifests.sh
