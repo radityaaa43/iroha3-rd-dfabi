@@ -5,6 +5,7 @@ import sys
 import tomllib
 
 party, digest, pub, network = sys.argv[1:5]
+audit_tls = len(sys.argv) > 5 and sys.argv[5] == "--audit-tls"
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
 read = lambda name: open(f"{pub}/{name}").read()
@@ -47,11 +48,29 @@ toml = "\n".join(
         f"dfabi = {lanes['ds-dfabi']}",
         "",
     ]
+    + (
+        [
+            "# 2-of-3 auditors (BI, org A, org B), each reached ONLY through its own party's gateway over mutual TLS (iroha3 S13 transport A)",
+            "[audit]",
+            "min_approvals = 2",
+            "auditor_urls = [" + ", ".join(json.dumps(f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443") for p in ("bi", "bank-a", "bank-b")) + "]",
+            "",
+            "[tls]",
+            'client_cert = "/tls/client/tls.crt"',
+            'client_key = "/tls/client/tls.key"',
+            'server_ca_dir = "/tls/cas"',
+            "",
+        ]
+        if audit_tls
+        else []
+    )
 )
 tomllib.loads(toml)
 docs = [
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "driver-config", "namespace": ns, "labels": labels},
      "data": {"rd-dfabi.toml": toml, "peers.json": json.dumps(peers, indent=2) + "\n"}},
+    *([{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "gateway-server-cas", "namespace": ns, "labels": labels},
+        "data": {f"{p}-server-ca.pem": open(f"{pub}/gateway-ca/{p}-server-ca.pem").read() for p in PARTIES}}] if audit_tls else []),
     {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "driver", "namespace": ns, "labels": role},
      "spec": {
          "replicas": 1,
@@ -79,7 +98,8 @@ docs = [
                      {"name": "keys", "mountPath": "/keys", "readOnly": True},
                      {"name": "config", "mountPath": "/config", "readOnly": True},
                      {"name": "genesis", "mountPath": "/genesis", "readOnly": True},
-                 ],
+                 ] + ([{"name": "client-cert", "mountPath": "/tls/client", "readOnly": True},
+                       {"name": "server-cas", "mountPath": "/tls/cas", "readOnly": True}] if audit_tls else []),
              }],
              "volumes": [
                  {"name": "keys", "secret": {"secretName": f"{party}-keys", "defaultMode": 0o400,
@@ -88,7 +108,9 @@ docs = [
                                                        {"key": "client.toml", "path": "client.toml"}]}},
                  {"name": "config", "configMap": {"name": "driver-config"}},
                  {"name": "genesis", "configMap": {"name": f"genesis-{h8}"}},
-             ],
+             ] + ([{"name": "client-cert", "secret": {"secretName": "iroha3-client-cert", "defaultMode": 0o400,
+                                                      "items": [{"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"}]}},
+                   {"name": "server-cas", "configMap": {"name": "gateway-server-cas"}}] if audit_tls else []),
          }},
      }},
     {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "driver", "namespace": ns, "labels": labels},
