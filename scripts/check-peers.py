@@ -74,11 +74,12 @@ if p2p:
     ns_rule = [f for f in frm if "namespaceSelector" in f]
     ip_rule = [f for f in frm if "ipBlock" in f]
     want_ips = [cidr] + (["100.64.0.0/10"] if clb else [])
+    p2p_ns = ["rd-iroha3-bank-c"] if c2 else ["rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"]  # exact namespaces of the same cluster (form ruling: no wildcard)
     if not (ports_ok and len(frm) == 1 + len(want_ips) and len(ns_rule) == 1
             and [r["ipBlock"]["cidr"] for r in ip_rule] == want_ips
-            and ns_rule[0]["namespaceSelector"]["matchLabels"] == {"app.kubernetes.io/part-of": "rd-iroha3"}
+            and ns_rule[0]["namespaceSelector"] == {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In", "values": p2p_ns}]}
             and ns_rule[0]["podSelector"]["matchLabels"] == {"rd-iroha3/role": "peer"}):
-        bad.append(f"peers-p2p must allow TCP 1337 from peer pods of rd-iroha3 namespaces and from {want_ips} only: {ing}")
+        bad.append(f"peers-p2p must allow TCP 1337 from peer pods of exactly {p2p_ns} and from {want_ips} only: {ing}")
     if p2p["spec"]["policyTypes"] != ["Ingress"]:
         bad.append("peers-p2p policyTypes")
 tor = need("NetworkPolicy", "peers-torii")
