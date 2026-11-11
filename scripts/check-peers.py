@@ -36,7 +36,7 @@ if sts:
         "startup /livez": c["startupProbe"]["httpGet"]["path"] == "/livez",
         "liveness /livez": c["livenessProbe"]["httpGet"]["path"] == "/livez",
         "readiness /readyz": c["readinessProbe"]["httpGet"]["path"] == "/readyz",
-        "requests": c["resources"]["requests"] == {"cpu": "250m", "memory": "1Gi"},
+        "requests": c["resources"]["requests"] == {"cpu": "250m", "memory": "512Mi" if c2 else "1Gi"},
         "limits": c["resources"]["limits"] == {"cpu": "2000m", "memory": "3Gi"},
         "peer secret": any(v.get("secret", {}).get("secretName") == f"peer-{party}" for v in pod["volumes"]),
         "genesis configmap": any(v.get("configMap", {}).get("name") == f"genesis-{h8}" for v in pod["volumes"]),
