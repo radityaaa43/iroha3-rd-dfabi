@@ -10,8 +10,8 @@
 # GAP (why ASSEMBLE_ACCEPT_GAP is required): today's genesis comes from `kagami localnet` plus the post-processing in
 # network/generate.sh:262-400 (RD/DFABI overlay genesis-rd-dfabi.jq, lane validators and stake, gas parameters dropped,
 # committee keys, `--config` peer.toml binding the DA policy). This script starts from `kagami genesis generate` and
-# signs; it does NOT port that post-processing, and the --topology JSON shape and the mint-finality parameters source
-# are [unverified] until .github/workflows/genesis-probe.yml has run. Do not use its output for a real chain yet.
+# signs; it does NOT port that post-processing, and the mint-finality parameters source and the --ivm-dir location
+# are [unverified] (see network/RUNBOOK-per-org.md sections 4-5). Do not use its output for a real chain yet.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 PUBLIC_DIR=${PUBLIC_DIR:-$here/public}
@@ -45,7 +45,7 @@ fi
 
 mkdir -p "$OUT_DIR"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-topology=$(jq -c '[.[] | {peer: .public_key, pop_hex: .pop_hex}]' "$peers") # [unverified] shape: embed_pop.rs entries carry peer + pop_hex
+topology=$(jq -c '[.[].public_key]' "$peers") # `--topology` is a "JSON-serialized vector of PeerId" (genesis-probe run 43006538345); PoPs go in --peer-pop
 "$KAGAMI" genesis generate --profile iroha3-dev --ivm-dir "${IVM_DIR:-./ivm_libs}" --genesis-public-key "$GENESIS_PUBLIC_KEY" \
   --kagemusha-mint-finality-parameters "$params" --consensus-mode npos default > "$tmp/genesis.json"
 pops=()

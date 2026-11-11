@@ -33,10 +33,23 @@ Reads only the public files; refuses secrets in `network/public`, fewer than 4 p
 account or mint-finality file. Runs `kagami genesis generate ... default`, then `kagami genesis sign --topology ... --peer-pop PK=POP x4
 --private-key-file --expected-public-key --out-file --expected-hash-out` (README `:236-262`). Destroy the signer key afterwards.
 
-## 4. Known gaps (why `ASSEMBLE_ACCEPT_GAP=1` is required)
+## 4. Settled by the probe (real kagami of `iroha3-rd-node:071e281e-stark`, workflow run 43006538345 on `d40ff82`)
+- `kagami keys --algorithm bls_normal --pop --out-dir D` works with throwaway keys: `public.key` 103 bytes, `pop.hex` 193 bytes; `--algorithm ed25519` gives a
+  genesis key whose public key starts `ed0120`.
+- `genesis sign`: `--topology` is a "JSON-serialized vector of `PeerId`" (so `assemble.sh` passes the 4 public keys, not objects with PoPs), the final topology
+  must be an exact `3f + 1` committee in 4..=31; `--peer-pop <public_key=pop_hex>` is repeatable and embeds the PoPs; `--config <PATH>` (TOML DA proof-policy)
+  and `--bound-manifest-out` exist (today's `generate.sh:403-406` signs with the nodes' own peer.toml for the DA policy).
+- `genesis generate` requires `--ivm-dir`, `--genesis-public-key` and `--kagemusha-mint-finality-parameters` (a regular file; without it: `read KAGEMUSHA
+  mint-finality parameter metadata from ... No such file or directory`, `crates/iroha_kagami/src/genesis/generate.rs:54`).
+- No `ivm_libs` or `*.to` file was found within 4 levels of `/` in the image ([unverified] if `find` ran: the step printed nothing).
+
+## 5. Known gaps (why `ASSEMBLE_ACCEPT_GAP=1` is required)
 1. Base genesis: today's comes from `kagami localnet` + `network/generate.sh:262-400` (RD/DFABI overlay, lane validators and stake, gas parameters dropped,
    committee keys, `--config` peer.toml binding the DA policy). Not ported.
-2. `--topology` JSON shape: README says "four validators at distinct canonical addresses"; `embed_pop.rs` entries carry a public-key `peer` + `pop_hex`.
-3. The mint-finality parameters source (table above).
-4. `--ivm-dir` location inside the node image.
-Points 2-4 are what `.github/workflows/genesis-probe.yml` prints (help texts, throwaway keys, the error `genesis generate` gives without the parameters).
+2. The source of the epoch-zero KAGEMUSHA mint-finality public parameters file (table in section 2) and the location of the IVM libraries for `--ivm-dir`.
+
+## 6. Secrets and ConfigMaps of S7 (binding condition from lead)
+`Secret peer-<party>` (that org's own `peer.toml`, with its own private keys) and `ConfigMap genesis-<hash8>` are PRODUCED BY S5 (this runbook's sections 1-3).
+Each party's Secret is created in its OWN namespace `rd-iroha3-<party>` from that org's OWN material only, with that party's own credential
+(`~/iroha3-party-kubeconfigs`, Role verbs create/update/patch for Secrets). The old loader `deploy/secrets.sh` (it loads every party's peer Secret from one shared
+place into one namespace) must not be used or referenced for the new chain.
