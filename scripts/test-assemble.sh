@@ -32,6 +32,7 @@ echo "rd-dfabi $*" >> "$STUB_LOG"
 case "$1 $2" in
   "keys new") echo "SEED-MARKER" > "$3/$4.seed"; chmod 600 "$3/$4.seed"; echo "$4 ed0120PUB$4" ;;
   "keys new-note") echo "NOTE-MARKER" > "$3/$4.note"; chmod 600 "$3/$4.note"; echo "$4 note keys written to $3/$4.note" ;;
+  "keys mint-finality") echo '{"stub":"mint-finality-triple"}' ;; # public triple: keygen-party.sh embeds it as JSON (S5)
 esac
 STUB
 chmod +x "$T/bin/kagami" "$T/bin/rd-dfabi"

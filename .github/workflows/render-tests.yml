@@ -1,0 +1,27 @@
+name: render-tests
+# Every offline render/tool test of this repo on every pull request (no cluster, no secrets, no docker pull). ci.yml only runs
+# scripts/check-manifests.sh (kustomize base), so the per-step renders (peers, gateway, driver, auditor, pool-init, p2p, ...) were NOT
+# covered by any check: a failing render test could merge (iroha3-rd-dfabi#40 merged on a local GREEN). scripts/test-s5.sh has its own
+# workflow (s5-test.yml: it needs docker and the pinned images), so it is skipped here.
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  render-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: "scripts/test-*.sh (all except test-s5.sh)"
+        run: |
+          failed=0
+          for t in scripts/test-*.sh; do
+            [[ $t == scripts/test-s5.sh ]] && continue
+            echo "::group::$t"
+            if bash "$t"; then echo "== $t: PASS"; else echo "== $t: FAILED"; failed=$((failed + 1)); fi
+            echo "::endgroup::"
+          done
+          (( failed == 0 )) || { echo "$failed test script(s) failed" >&2; exit 1; }
