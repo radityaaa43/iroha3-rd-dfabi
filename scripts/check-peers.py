@@ -86,7 +86,10 @@ if tor:
     # ANALYST Q4(d): the gateway pods of the own namespace, and the peer pods of exactly the namespaces of the same cluster (the
     # peers poll each other's Torii for telemetry, network/s5.py:361): namespace NAMES plus the pod label, never a wide selector.
     cluster_ns = ["rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"]
-    want_from = [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}]
+    # The party's OWN clients (driver, auditor, pool-init Job) reach its own Torii inside ONE namespace: they lost that path when
+    # torii-bootstrap goes (S14). Not another party: principle 6 is untouched.
+    want_from = [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}},
+                 {"podSelector": {"matchExpressions": [{"key": "rd-iroha3/role", "operator": "In", "values": ["auditor", "driver", "pool-init"]}]}}]
     if not c2:  # bank-c (cluster 2) has no same-cluster peer to poll: gateway pods only
         want_from.append({"namespaceSelector": {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In", "values": cluster_ns}]},
                           "podSelector": {"matchLabels": {"rd-iroha3/role": "peer"}}})
