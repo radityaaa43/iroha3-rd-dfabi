@@ -1,0 +1,18 @@
+HTTP/1.1 200 OK
+content-type: application/json
+content-length: 214
+
+{
+  "peers": 3,
+  "blocks": 1,
+  "blocks_non_empty": 0,
+  "commit_time_ms": 0,
+  "txs_approved": 16,
+  "txs_rejected": 0,
+  "uptime": {
+    "secs": 4321,
+    "nanos": 5
+  },
+  "view_changes": 0,
+  "queue_size": 0
+}

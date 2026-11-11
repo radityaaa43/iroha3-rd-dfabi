@@ -46,7 +46,7 @@ if pod:
         if banned in script:
             bad.append(f"probe loop must read only /status counts, found {banned!r}")
     for need in ("1.1.1.1", "8.8.8.8", "KUBERNETES_SERVICE_HOST", "ghcr.io", "sleep 15", f"{party}-0.{party}.rd-iroha3-{party}.svc.cluster.local",
-                 "GET /status HTTP/1.0", "(peers|blocks|view_changes)"):
+                 "GET /status HTTP/1.0", "(peers|blocks|view_changes)", "Accept: application/json", "http=", "ctype=", "bytes=", "# PARSE-BEGIN", "# PARSE-END"):
         if need not in script:
             bad.append(f"probe loop lacks {need!r}")
 np = by.get(("NetworkPolicy", "egress-probe-egress"))
