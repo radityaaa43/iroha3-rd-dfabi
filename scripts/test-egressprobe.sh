@@ -6,6 +6,7 @@ R=deploy/egress-probe/render.sh
 fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 ok() { echo "ok:   $*"; }
+T=$(mktemp -d); trap 'find "$T" -delete' EXIT
 D=sha256:$(printf 'a%.0s' $(seq 1 64))
 refuse() { local label=$1 part=$2; shift 2; local err rc; err=$("$R" "$@" 2>&1 >/dev/null); rc=$?; [[ $rc -eq 2 && $err == *"$part"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused (rc=$rc): $err"; }
 refuse "no arguments" "usage"
