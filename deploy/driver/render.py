@@ -29,6 +29,7 @@ toml = "\n".join(
         'network_id_file = "/genesis/genesis.expected_hash"',
         'account_domain = "wonderland.universal"',
         'client_toml = "/keys/client.toml"',
+        f'party = "{party}"  # the acting party (sponsor = this bank, node-build S10); set explicitly, never the default bi',
         'peers_json = "/config/peers.json"',
         'key_dir = "/keys"',
         f'fee_asset = "{fee}"',
