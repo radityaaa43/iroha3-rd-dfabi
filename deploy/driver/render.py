@@ -69,8 +69,11 @@ docs = [
                  "ports": [{"name": "http", "containerPort": 8091}],
                  "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
                  "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
-                 "livenessProbe": {"httpGet": {"path": "/healthz", "port": "http"}, "periodSeconds": 20, "failureThreshold": 3},
-                 "readinessProbe": {"httpGet": {"path": "/healthz", "port": "http"}, "periodSeconds": 10, "failureThreshold": 2},
+                 # One request at a time: /healthz is unanswered while a /dvp-native waits for Applied (up to 300 s). Liveness
+                 # (12 x 30 s + 5 s) outlasts that, so the pod is never killed mid-request; readiness (3 x 5 s) fails fast, so the
+                 # Service stops routing to a busy driver. Throughput limit: ONE in-flight request per bank (ANALYST Q10).
+                 "livenessProbe": {"httpGet": {"path": "/healthz", "port": "http"}, "periodSeconds": 30, "failureThreshold": 12, "timeoutSeconds": 5},
+                 "readinessProbe": {"httpGet": {"path": "/healthz", "port": "http"}, "periodSeconds": 5, "failureThreshold": 3, "timeoutSeconds": 2},
                  "volumeMounts": [
                      {"name": "keys", "mountPath": "/keys", "readOnly": True},
                      {"name": "config", "mountPath": "/config", "readOnly": True},
