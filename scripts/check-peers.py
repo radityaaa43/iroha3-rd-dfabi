@@ -85,14 +85,13 @@ if tor:
     ing = tor["spec"]["ingress"]
     # ANALYST Q4(d): the gateway pods of the own namespace, and the peer pods of exactly the namespaces of the same cluster (the
     # peers poll each other's Torii for telemetry, network/s5.py:361): namespace NAMES plus the pod label, never a wide selector.
-    cluster_ns = ["rd-iroha3-bank-c"] if c2 else ["rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"]
-    want_from = [
-        {"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}},
-        {"namespaceSelector": {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In", "values": cluster_ns}]},
-         "podSelector": {"matchLabels": {"rd-iroha3/role": "peer"}}},
-    ]
+    cluster_ns = ["rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"]
+    want_from = [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}]
+    if not c2:  # bank-c (cluster 2) has no same-cluster peer to poll: gateway pods only
+        want_from.append({"namespaceSelector": {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In", "values": cluster_ns}]},
+                          "podSelector": {"matchLabels": {"rd-iroha3/role": "peer"}}})
     if not (len(ing) == 1 and ing[0]["ports"] == [{"protocol": "TCP", "port": 8080}] and ing[0]["from"] == want_from):
-        bad.append(f"peers-torii must allow TCP 8080 from the own gateway pods and from the peer pods of exactly {cluster_ns}: {ing}")
+        bad.append(f"peers-torii must allow TCP 8080 from the own gateway pods{"" if c2 else f" and from the peer pods of exactly {cluster_ns}"}: {ing}")
 boot = need("NetworkPolicy", "torii-bootstrap")
 if boot:
     ing = boot["spec"]["ingress"]
