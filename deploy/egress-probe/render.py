@@ -3,10 +3,11 @@ import json
 import sys
 
 party, digest = sys.argv[1:3]
+driver_role = len(sys.argv) > 3 and sys.argv[3] == "driver"
 ns = f"rd-iroha3-{party}"
 gw_ns = ("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",)
 labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
-pod_labels = {**labels, "rd-iroha3/role": "egress-probe", "rd/egress-locked": "true"}
+pod_labels = {**labels, "rd-iroha3/role": "driver"} if driver_role else {**labels, "rd-iroha3/role": "egress-probe", "rd/egress-locked": "true"}
 loop = r'''tcp() { timeout 4 bash -c 'exec 3<>/dev/tcp/$0/$1' "$1" "$2" 2>/dev/null; case $? in 0) echo OPEN;; 124) echo TIMEOUT;; 1) echo REFUSED;; *) echo rc$?;; esac; }
 dns() { getent hosts "$1" >/dev/null 2>&1 && echo ok || echo NXDOMAIN; }
 # PARSE-BEGIN (tested on real-format fixtures: scripts/test-egressprobe.sh; prints http/ctype/bytes and the three counts, NEVER the body)
@@ -35,7 +36,7 @@ docs = [
                   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}}, "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}} for q in gw_ns],
                    "ports": [{"protocol": "TCP", "port": 8443}]},
               ]}},
-    {"apiVersion": "v1", "kind": "Pod", "metadata": meta("egress-probe", pod_labels),
+    {"apiVersion": "v1", "kind": "Pod", "metadata": meta("egress-probe-driver" if driver_role else "egress-probe", pod_labels),
      "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False, "enableServiceLinks": False, "imagePullSecrets": [{"name": "ghcr-pull"}],
               "securityContext": {"runAsNonRoot": True, "runAsUser": 1001, "runAsGroup": 1001, "seccompProfile": {"type": "RuntimeDefault"}},
               "containers": [{"name": "probe", "image": f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}", "imagePullPolicy": "Always",
@@ -45,4 +46,6 @@ docs = [
                               "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}],
               "volumes": [{"name": "tmp", "emptyDir": {"sizeLimit": "8Mi"}}]}},
 ]
+if driver_role:  # the positive control is the Pod alone (no policy selects it)
+    docs = [d for d in docs if d["kind"] == "Pod"]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
