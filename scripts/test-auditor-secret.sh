@@ -10,13 +10,13 @@ ok() { echo "ok:   $*"; }
 mkdir "$T/bin"
 cat > "$T/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
+# party-admin Role: secrets create/update/patch only. No get, so `apply` and `--dry-run` GET paths are Forbidden.
 echo "kubectl $*" >> "$STUB_LOG"
-if [[ $1 == create ]]; then
-  for a in "$@"; do case $a in --from-file=*) f=${a#--from-file=}; echo "FILE ${f%%=*} $(wc -c < "${f#*=}")" >> "$STUB_LOG" ;; esac; done
-  echo "kind: Secret"
-elif [[ $1 == apply ]]; then
-  cat > /dev/null # like the real kubectl: read the manifest from stdin
-fi
+if [[ $1 != create ]]; then echo "Error from server (Forbidden): verb $1 on secrets is not allowed" >&2; exit 1; fi
+for a in "$@"; do [[ $a == --dry-run* ]] && { echo "Error from server (Forbidden): --dry-run not allowed in this test" >&2; exit 1; }; done
+if [[ -n ${STUB_EXISTS:-} ]]; then echo 'Error from server (AlreadyExists): secrets "bi-auditor-key" already exists' >&2; exit 1; fi
+for a in "$@"; do case $a in --from-file=*) f=${a#--from-file=}; echo "FILE ${f%%=*} $(wc -c < "${f#*=}")" >> "$STUB_LOG" ;; esac; done
+echo "secret/bi-auditor-key created"
 STUB
 chmod +x "$T/bin/kubectl"
 export STUB_LOG="$T/log" KUBECTL="$T/bin/kubectl"
@@ -37,6 +37,10 @@ log=$(cat "$STUB_LOG")
 [[ $log == *"create secret generic bi-auditor-key"* && $log == *"-n rd-iroha3-bi"* ]] && ok "Secret bi-auditor-key in rd-iroha3-bi" || fail "secret name/namespace: $log"
 [[ $log == *"FILE bi-auditor.seed "* && $log == *"FILE bi-auditor.hybrid "* ]] && ok "keys bi-auditor.seed and bi-auditor.hybrid" || fail "key names: $log"
 [[ $(grep -c 'rd-iroha3-' <<<"$log" | head -1) -ge 1 && $log != *"rd-iroha3-bank"* && $log != *"-n iroha3"* ]] && ok "no other namespace touched" || fail "other namespace in: $log"
+[[ $(grep -c '^kubectl' <<<"$log") -eq 1 && $log != *apply* && $log != *replace* && $log != *dry-run* ]] && ok "one plain create call, no apply/replace/dry-run" || fail "verbs: $log"
+: > "$STUB_LOG"; out=$(STUB_EXISTS=1 "$S" "$T/c" 2>&1); rc=$?
+[[ $rc -ne 0 && $out == *AlreadyExists* ]] && ok "re-run fails with AlreadyExists (safe, never overwrites)" || fail "re-run: rc=$rc $out"
+[[ $(cat "$STUB_LOG") != *apply* && $(cat "$STUB_LOG") != *replace* ]] && ok "re-run does not fall back to apply/replace" || fail "re-run log: $(cat "$STUB_LOG")"
 refuse "no argument" "usage"
 refuse "a missing custody dir" "custody" "$T/none"
 mk "$T/d1"; rm "$T/d1/bi-auditor.hybrid"; refuse "a missing hybrid key" "bi-auditor.hybrid" "$T/d1"
