@@ -49,7 +49,8 @@ refuse "bank-c on cluster 1" "cluster" bank-c "${base[@]}" --cluster 1
 refuse "bi on cluster 2" "cluster" bi "${base[@]}" --cluster 2
 refuse "cluster 2 without --lb-acl" "lb-acl" bank-c "${base[@]}" --cluster 2 --lb-range 47.237.84.150/32
 refuse "cluster 2 without --lb-range" "lb-range" bank-c "${base[@]}" --cluster 2 --lb-acl "$ACL"
-refuse "cluster 1 with an LB acl" "lb-acl" bi "${base[@]}" --lb-acl "$ACL" --lb-range 47.237.84.150/32
+refuse "cluster 1 with an LB acl but no range" "lb-range" bi "${base[@]}" --lb-acl "$ACL"
+refuse "cluster 1 with an LB range but no acl" "lb-acl" bi "${base[@]}" --lb-range 47.237.84.150/32
 refuse "a bad acl id" "lb-acl" bank-c "${base[@]}" --cluster 2 --lb-acl "x;y" --lb-range 47.237.84.150/32
 refuse "a range that is not a /32" "lb-range" bank-c "${base[@]}" --cluster 2 --lb-acl "$ACL" --lb-range 10.0.0.0/8
 
@@ -57,6 +58,11 @@ for p in bi bank-a bank-b; do
   out=$("$R" "$p" "${base[@]}" 2>&1) || { fail "$p: render failed: $out"; continue; }
   grep -q '@[A-Z_]*@' <<<"$out" && fail "$p: unreplaced placeholder in output"
   python3 -I scripts/check-gateway.py "$p" 1 "$EI" "$OI" <<<"$out" || fails=$((fails + 1))
+done
+# cluster 1 WITH the cross-cluster gateway LB (ACL-first, PLAN S14 "one external listener per namespace"): NodePort + LB
+for p in bi bank-a bank-b; do
+  out=$("$R" "$p" "${base[@]}" --lb-acl "$ACL" --lb-range 47.237.62.1/32 2>&1) || { fail "$p with LB: render failed: $out"; continue; }
+  python3 -I scripts/check-gateway.py "$p" 1 "$EI" "$OI" lb <<<"$out" || fails=$((fails + 1))
 done
 out=$("$R" bank-c "${base[@]}" --cluster 2 --lb-acl "$ACL" --lb-range 47.237.84.150/32 2>&1) || fail "bank-c: render failed: $out"
 python3 -I scripts/check-gateway.py bank-c 2 "$EI" "$OI" <<<"$out" || fails=$((fails + 1))

@@ -6,7 +6,8 @@
 # Objects in ns rd-iroha3-<party>: ConfigMaps gateway-envoy and gateway-opa, Deployment gateway (envoy + opa), Service gateway
 # (ClusterIP 8443), NetworkPolicy gateway-ingress (TCP 8443, no `from`: mTLS + OPA are the control), and the Lensa/peer path:
 # cluster 1 (bi, bank-a, bank-b) Service gateway-ext (NodePort), cluster 2 (bank-c) Service gateway-lb (LoadBalancer, ONLY with an
-# existing ACL: --lb-acl and --lb-range are required there and refused on cluster 1).
+# existing ACL: --lb-acl and --lb-range are required there; on cluster 1 they are optional (both or none) and ADD gateway-lb next to the
+# NodePort Service, for the clients of the other cluster (PLAN S14: one external listener per namespace).
 # The Secrets `gateway-server` (tls.crt, tls.key) and `gateway-client-ca` (ca.crt) are created OUTSIDE the render, by the party.
 # --opa-config is the party's OPA config with PUBLIC bundle-signing keys only (a PRIVATE KEY string is refused); it also carries the
 # `plugins.envoy_ext_authz_grpc` block, which is kept as given.
@@ -44,7 +45,9 @@ if [[ $cluster == 2 ]]; then
   [[ -n $acl ]] || die "cluster 2 needs --lb-acl (an EXISTING Alibaba ACL id): no load balancer without an ACL"
   (( ${#ranges[@]} )) || die "cluster 2 needs at least one --lb-range <ipv4>/32"
 else
-  [[ -z $acl && ${#ranges[@]} -eq 0 ]] || die "--lb-acl/--lb-range are for cluster 2 only (cluster 1 uses the NodePort Service)"
+  # cluster 1: the NodePort Service always; the cross-cluster LB (ACL-first) only when BOTH --lb-acl and --lb-range are given
+  [[ -z $acl || ${#ranges[@]} -gt 0 ]] || die "--lb-acl needs at least one --lb-range <ipv4>/32"
+  [[ -n $acl || ${#ranges[@]} -eq 0 ]] || die "--lb-range needs --lb-acl (an EXISTING Alibaba ACL id): no load balancer without an ACL"
 fi
 [[ -z $acl || $acl =~ ^acl-[a-z0-9]+$ ]] || die "--lb-acl '$acl' is not an Alibaba ACL id (acl-<lowercase alnum>)"
 for r in "${ranges[@]}"; do [[ $r =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || die "--lb-range '$r' must be <ipv4>/32"; done

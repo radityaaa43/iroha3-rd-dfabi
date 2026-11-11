@@ -6,6 +6,7 @@ import sys
 import yaml
 
 party, cluster, envoy_img, opa_img = sys.argv[1:5]
+lbmode = len(sys.argv) > 5 and sys.argv[5] == "lb"  # cluster 1 WITH the cross-cluster LB (--lb-acl/--lb-range)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -21,7 +22,8 @@ def need(kind, name):
 
 want = {("ConfigMap", "gateway-envoy"), ("ConfigMap", "gateway-opa"), ("Deployment", "gateway"), ("Service", "gateway"),
         ("NetworkPolicy", "gateway-ingress")}
-want |= {("Service", "gateway-ext")} if cluster == "1" else {("Service", "gateway-lb")}
+want |= {("Service", "gateway-ext")} if cluster == "1" else set()
+want |= {("Service", "gateway-lb")} if (cluster == "2" or lbmode) else set()
 if set(by) != want or len(docs) != len(want):
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)} ({len(docs)} documents)")
 for (k, n), d in by.items():
@@ -180,7 +182,7 @@ if cluster == "1":
     ext = need("Service", "gateway-ext")
     if ext and (ext["spec"]["type"] != "NodePort" or ext["spec"]["externalTrafficPolicy"] != "Cluster" or "nodePort" in ext["spec"]["ports"][0]):
         bad.append("Service gateway-ext: NodePort, externalTrafficPolicy Cluster, no fixed nodePort")
-else:
+if cluster == "2" or lbmode:
     lb = need("Service", "gateway-lb")
     if lb:
         an = lb["metadata"].get("annotations", {})
