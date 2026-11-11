@@ -58,14 +58,17 @@ for p in bi bank-a bank-b; do
   out=$("$R" "$p" "${base[@]}" 2>&1) || { fail "$p: render failed: $out"; continue; }
   grep -q '@[A-Z_]*@' <<<"$out" && fail "$p: unreplaced placeholder in output"
   python3 -I scripts/check-gateway.py "$p" 1 "$EI" "$OI" <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "gateway" <<<"$out" || fails=$((fails + 1))
 done
 # cluster 1 WITH the cross-cluster gateway LB (ACL-first, PLAN S14 "one external listener per namespace"): NodePort + LB
 for p in bi bank-a bank-b; do
   out=$("$R" "$p" "${base[@]}" --lb-acl "$ACL" --lb-range 47.237.62.1/32 2>&1) || { fail "$p with LB: render failed: $out"; continue; }
   python3 -I scripts/check-gateway.py "$p" 1 "$EI" "$OI" lb <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "gateway" <<<"$out" || fails=$((fails + 1))
 done
 out=$("$R" bank-c "${base[@]}" --cluster 2 --lb-acl "$ACL" --lb-range 47.237.84.150/32 2>&1) || fail "bank-c: render failed: $out"
 python3 -I scripts/check-gateway.py bank-c 2 "$EI" "$OI" <<<"$out" || fails=$((fails + 1))
+python3 -I scripts/check-netpol-form.py "gateway" <<<"$out" || fails=$((fails + 1))
 grep -q "47.237.84.150/32" <<<"$out" && grep -q "$ACL" <<<"$out" && ok "bank-c carries the existing ACL id and source range" || fail "bank-c: ACL id or range missing"
 a=$("$R" bi "${base[@]}"); b=$("$R" bi "${base[@]}")
 [[ -n $a && $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs or is empty"

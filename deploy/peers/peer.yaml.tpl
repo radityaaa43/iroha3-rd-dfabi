@@ -205,8 +205,10 @@ spec:
   ingress:
     - from:
         - namespaceSelector:
-            matchLabels:
-              app.kubernetes.io/part-of: rd-iroha3
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [@P2P_NS@]
           podSelector:
             matchLabels:
               rd-iroha3/role: peer

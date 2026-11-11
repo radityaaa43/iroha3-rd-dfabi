@@ -36,6 +36,7 @@ for p in bi bank-a bank-b; do
   out=$("$R" "$p" "$D" "$P" 2>&1) || { fail "$p: render failed: $out"; continue; }
   grep -q '@[A-Z_]*@' <<<"$out" && fail "$p: unreplaced placeholder in output"
   python3 -I scripts/check-auditor.py "$p" "$D" "$H8" "$CHAIN" <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "auditor" <<<"$out" || fails=$((fails + 1))
 done
 a=$("$R" bi "$D" "$P"); b=$("$R" bi "$D" "$P")
 [[ $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs"
