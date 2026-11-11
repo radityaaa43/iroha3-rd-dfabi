@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Epoch-stall probe (design: network/probes/epoch-stall.md). THROWAWAY chain, 4 stock iroha3d containers on the host
+# network, no secrets, no cluster. Usage: epoch-stall.sh r1|r2|r3|r4   Env: IMAGE (required), L (r2 epoch length),
+# SECS (observation time, default 150), WORK (scratch dir). Prints one height line per sample and the decisive log lines.
+set -uo pipefail
+row=${1:?usage: epoch-stall.sh r0|r1|r2|r3|r4}
+IMAGE=${IMAGE:?IMAGE is required}
+L=${L:-1152921504606846976}
+SECS=${SECS:-150}
+HERE=$(cd "$(dirname "$0")" && pwd)
+W=${WORK:-$(mktemp -d)}; mkdir -p "$W"; chmod 700 "$W"
+U="$(id -u):$(id -g)"
+k() { docker run --rm --user "$U" -v "$W:/work/out" --entrypoint kagami "$IMAGE" "$@"; }
+mode=npos; case $row in r3 | r4) mode=permissioned ;; esac
+case $row in r1) EL=20 ;; r2) EL=$L ;; r0 | r3 | r4) EL="" ;; *) echo "unknown row $row" >&2; exit 2 ;; esac
+echo "== row $row: consensus $mode, epoch_length_blocks ${EL:-n/a}"
+k localnet --peers 4 --consensus-mode "$mode" --chain-id 00000000-0000-4000-8000-000000000a01 \
+  --base-api-port 18080 --base-p2p-port 11337 --out-dir /work/out/ln >/dev/null || { echo "localnet failed" >&2; exit 1; }
+ln="$W/ln"
+# iroha3d fails P2P startup ("SoraNet handshake negotiation failed") on a group-writable or setgid storage dir (deploy/peers/peer.yaml.tpl)
+find "$ln" -type d -exec chmod 700 {} +
+if [[ -n $EL ]]; then
+  python3 -I - "$ln/genesis.json" "$EL" <<'PY' || exit 1
+import json, sys
+path, el = sys.argv[1], int(sys.argv[2])
+g = json.load(open(path))
+n = 0
+for tx in g["transactions"]:
+    c = (tx.get("parameters") or {}).get("custom") or {}
+    if "sumeragi_npos_parameters" in c:
+        pl = c["sumeragi_npos_parameters"]["payload"]
+        pl["epoch_length_blocks"] = el
+        # evidence_horizon + slashing_delay must not exceed 3 epoch lengths (iroha_data_model parameter/system.rs:538-546)
+        for f in ("evidence_horizon_blocks", "slashing_delay_blocks"):
+            pl[f] = min(pl[f], el)
+        n += 1
+assert n == 1, "expected exactly one sumeragi_npos_parameters"
+json.dump(g, open(path, "w"), indent=2)
+PY
+  sed 's|^expected_hash_file = .*|expected_hash = "REPLACE_WITH_GENESIS_EXPECTED_HASH"|' "$ln/peer0.toml" > "$ln/sign.toml"
+  chmod 600 "$ln/sign.toml"
+  k genesis sign /work/out/ln/genesis.json --private-key-file /work/out/ln/genesis.private_key \
+    --expected-public-key "$(cat "$ln/genesis.public_key")" --config /work/out/ln/sign.toml \
+    --out-file /work/out/ln/new.signed.nrt --expected-hash-out /work/out/ln/new.expected_hash >/dev/null || { echo "re-sign failed" >&2; exit 1; }
+  mv "$ln/new.signed.nrt" "$ln/genesis.signed.nrt"; mv "$ln/new.expected_hash" "$ln/genesis.expected_hash"
+  echo "genesis re-signed with epoch_length_blocks=$EL"
+fi
+for i in 0 1 2 3; do
+  grep -q '^\[nexus.storage\]' "$ln/peer$i.toml" || printf '\n[nexus.storage]\nlocal_budget_bytes = 1073741824\n' >> "$ln/peer$i.toml"
+done
+sora=()
+[[ $mode == npos ]] && sora=(--sora)
+if [[ $row == r4 ]]; then
+  # our 3-lane / 3-dataspace catalog and routing policy on peer0 only (merge logic as network/generate.sh)
+  python3 -I - "$ln/peer0.toml" "$HERE/../nexus.toml" <<'PY' || exit 1
+import json, sys, tomllib
+peer, nexus = sys.argv[1:]
+t = tomllib.load(open(peer, "rb"))
+o = tomllib.load(open(nexus, "rb"))["nexus"]
+n = t.setdefault("nexus", {})
+for key in ("lane_count", "lane_catalog", "dataspace_catalog", "routing_policy", "storage"):
+    n[key] = o[key]
+def key(k): return k if k and all(c.isalnum() and c.isascii() or c in "_-" for c in k) else json.dumps(k)
+def val(v):
+    if isinstance(v, bool): return "true" if v else "false"
+    if isinstance(v, (int, float)): return repr(v)
+    if isinstance(v, str): return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, list): return "[" + ", ".join(val(x) for x in v) + "]"
+    raise TypeError(type(v))
+def tab(v): return isinstance(v, list) and v and all(isinstance(x, dict) for x in v)
+def emit(d, path, out):
+    for k, v in d.items():
+        if not isinstance(v, dict) and not tab(v): out.append("%s = %s" % (key(k), val(v)))
+    for k, v in d.items():
+        sub = path + [key(k)]
+        if isinstance(v, dict): out += ["", "[%s]" % ".".join(sub)]; emit(v, sub, out)
+        elif tab(v):
+            for item in v: out += ["", "[[%s]]" % ".".join(sub)]; emit(item, sub, out)
+out = []
+emit(t, [], out)
+open(peer, "w").write("\n".join(out).lstrip("\n") + "\n")
+PY
+  sora=(--sora)
+  nodes=(0)
+else
+  nodes=(0 1 2 3)
+fi
+for i in "${nodes[@]}"; do
+  docker run -d --name "probe-n$i" --user "$U" --network host -v "$W:/work/out" --entrypoint iroha3d "$IMAGE" \
+    "${sora[@]}" --config "/work/out/ln/peer$i.toml" >/dev/null
+done
+if [[ $row == r4 ]]; then
+  sleep 25
+  echo "-- r4: node0 state: $(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}}' probe-n0)"
+  echo "-- r4: refusal text:"; docker logs probe-n0 2>&1 | grep -iE 'NPoS|lane topology|requires' | head -5
+  docker logs probe-n0 2>&1 | tail -5 | cut -c1-300
+  docker rm -f probe-n0 >/dev/null; exit 0
+fi
+sleep 5
+cli() { docker run --rm --user "$U" --network host -v "$W:/work/out" --entrypoint iroha "$IMAGE" -c /work/out/ln/client.toml "$@"; }
+echo "-- containers:"; docker ps -a --format '{{.Names}} {{.Status}}'
+echo "-- waiting for Torii on node0 (max 240 s)"
+for _ in $(seq 1 48); do [[ -n $(curl -s --max-time 3 http://127.0.0.1:18080/status) ]] && break; sleep 5; done
+echo "-- GET /status:"; curl -s --max-time 5 http://127.0.0.1:18080/status | head -c 600; echo
+echo "-- node0 log (non-INFO lines after the banner):"; docker logs probe-n0 2>&1 | grep -v ' INFO ' | sed -n '17,40p' | cut -c1-300
+if [[ -z $(docker ps -q --filter name=probe-n) ]]; then echo "no node is running: probe invalid"; exit 1; fi
+echo "-- one ping:"; cli ledger transaction ping --msg probe --fee-payer authority 2>&1 | head -c 700; echo
+(while :; do cli ledger transaction ping --msg probe --fee-payer authority >/dev/null 2>&1; sleep 1; done) &
+traffic=$!
+end=$((SECONDS + SECS)); last=""
+while ((SECONDS < end)); do
+  st=$(curl -s --max-time 4 http://127.0.0.1:18080/status)
+  h=$(jq -r '.blocks // empty' <<<"$st" 2>/dev/null)
+  run=$(docker ps -q --filter name=probe-n | wc -l)
+  echo "t=$((SECS - (end - SECONDS)))s height=${h:-?} running=$run/4 peers=$(jq -r '.peers // "?"' <<<"$st" 2>/dev/null) non_empty=$(jq -r '.blocks_non_empty // "?"' <<<"$st" 2>/dev/null)"
+  last=$h; sleep 5
+  # HOLD: after the height passes BOUNDARY, all 4 nodes must stay running for HOLD_PAST seconds
+  if [[ -n ${HOLD_PAST:-} && -n $h && $h -gt ${BOUNDARY:-20} ]]; then
+    : "${past_at:=$SECONDS}"
+    ((run < 4)) && hold_broken=1
+    if ((SECONDS - past_at >= HOLD_PAST)); then
+      echo "HOLD: height $h > ${BOUNDARY:-20} for $((SECONDS - past_at)) s, running=$run/4, broken=${hold_broken:-0}"; break
+    fi
+  fi
+  # stop early: node0 unreachable for 60 s, or STOP_AT reached (row r2 needs only to pass the old epoch end)
+  if [[ -z $h ]]; then miss=$((${miss:-0} + 1)); else miss=0; fi
+  ((miss >= 12)) && { echo "node0 unreachable for 60 s: stopping"; break; }
+  [[ -n ${STOP_AT:-} && -n $h && $h -ge $STOP_AT ]] && { echo "height $h >= STOP_AT $STOP_AT: stopping"; break; }
+done
+kill "$traffic" 2>/dev/null
+echo "-- final height ${last:-?}"
+for i in 0 1 2 3; do
+  echo "== node$i: $(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} finished={{.State.FinishedAt}}' "probe-n$i")"
+  if [[ $(docker inspect -f '{{.State.Status}}' "probe-n$i") == exited ]]; then
+    echo "-- node$i: ERROR lines and the 25 lines before the first supervisor exit:"
+    docker logs "probe-n$i" 2>&1 | grep -E ' ERROR ' | sed -E 's/\{[^}]{60,}\}/{..}/g' | head -6 | cut -c1-500
+    docker logs "probe-n$i" 2>&1 | grep -v 'peer_monitor' | awk '/Supervisor observed child exit/ && !f {f=1; for (k=NR-25; k<NR; k++) if (k>0) print buf[k%26]} {buf[NR%26]=$0}' | sed -E 's/\{[^}]{60,}\}/{..}/g' | cut -c1-400
+  fi
+  echo "-- node$i decisive lines (any level):"
+  docker logs "probe-n$i" 2>&1 | grep -iE 'MissingNextKagemushaMintFinalityEpochId|provisioned Pasta|top-up or epoch-boundary|fail-stop|fail stop|epoch boundary|next_epoch' | sed -E 's/\{[^}]{60,}\}/{..}/g' | sort -u | head -4 | cut -c1-420
+  echo "-- node$i last 12 lines without peer_monitor/alias noise:"
+  docker logs "probe-n$i" 2>&1 | grep -vE 'peer_monitor|alias|onboard|^\s*$|^Location|Connection refused|^Caused|^   [0-9]:' | tail -12 | sed -E 's/\{[^}]{60,}\}/{..}/g' | cut -c1-360
+done
+for i in 0 1 2 3; do docker rm -f "probe-n$i" >/dev/null 2>&1; done
+if [[ -n ${HOLD_PAST:-} ]]; then
+  if [[ -z ${past_at:-} ]]; then echo "VERDICT: HOLD NOT REACHED (height never passed ${BOUNDARY:-20})"; exit 1; fi
+  if [[ -n ${hold_broken:-} || ${run:-0} -lt 4 ]]; then echo "VERDICT: HOLD BROKEN (a node stopped after the boundary)"; exit 1; fi
+  echo "VERDICT: HOLD OK (4/4 running ${HOLD_PAST} s past height ${BOUNDARY:-20})"
+elif [[ -n ${STOP_AT:-} ]]; then
+  [[ ${last:-0} -ge $STOP_AT && ${run:-0} -eq 4 ]] && echo "VERDICT: 4/4 running at height $last (>= $STOP_AT)" || { echo "VERDICT: FAILED before height $STOP_AT (last=${last:-?} running=${run:-0}/4)"; exit 1; }
+fi

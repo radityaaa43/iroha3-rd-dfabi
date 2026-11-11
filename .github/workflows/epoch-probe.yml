@@ -1,0 +1,30 @@
+name: epoch-probe
+# Diagnostic, not a gate: throwaway chain, 4 stock iroha3d containers, no secrets, no cluster. Design: network/probes/epoch-stall.md.
+on:
+  # Manual only: a design PR must not add a failing check. The rows run on the CPU-bound hosted runner (~1 block / 40 s);
+  # r1/r2 need 25 min and the idle NPoS chain commits no block without traffic (iroha_core/src/sumeragi/v2_runner.rs:1563-1597).
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  IMAGE: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        row: [r0, r1, r2, r3, r4]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: "row ${{ matrix.row }}"
+        run: |
+          docker pull -q "$IMAGE" >/dev/null
+          case "${{ matrix.row }}" in r0 | r1 | r2) secs=3000 ;; *) secs=240 ;; esac
+          stop=""; hold=""
+          [ "${{ matrix.row }}" = r0 ] && stop=24
+          [ "${{ matrix.row }}" = r2 ] && hold=600
+          L=1152921504606846976 SECS=$secs STOP_AT=$stop HOLD_PAST=$hold BOUNDARY=20 WORK="$RUNNER_TEMP/w" bash network/probes/epoch-stall.sh "${{ matrix.row }}"
