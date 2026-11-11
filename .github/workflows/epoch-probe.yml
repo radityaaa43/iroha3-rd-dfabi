@@ -1,8 +1,8 @@
 name: epoch-probe
 # Diagnostic, not a gate: throwaway chain, 4 stock iroha3d containers, no secrets, no cluster. Design: network/probes/epoch-stall.md.
 on:
-  pull_request:
-    paths: ['network/probes/**', '.github/workflows/epoch-probe.yml']
+  # Manual only: a design PR must not add a failing check. The rows run on the CPU-bound hosted runner (~1 block / 40 s);
+  # r1/r2 need 25 min and the idle NPoS chain commits no block without traffic (iroha_core/src/sumeragi/v2_runner.rs:1563-1597).
   workflow_dispatch:
 permissions:
   contents: read
