@@ -167,7 +167,7 @@ if cluster == "1":
     docs.append({"apiVersion": "v1", "kind": "Service", "metadata": meta("gateway-ext"),
                  "spec": {"type": "NodePort", "externalTrafficPolicy": "Cluster", "selector": role,
                           "ports": [{"name": "https", "port": 8443, "targetPort": 8443, "protocol": "TCP"}]}})
-else:
+if cluster == "2" or acl:
     # Only behind an EXISTING whitelist ACL (Alibaba CLB: loadBalancerSourceRanges alone creates none, see deploy/p2p).
     p = "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-"
     docs.append({"apiVersion": "v1", "kind": "Service",
