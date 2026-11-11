@@ -9,6 +9,11 @@
 - `bi-auditor` log `request failed: Broken pipe` every 10 s = the tcpSocket readiness probe, benign (not compared with the old pod).
 - Not exercised live: the M2/M2b abort paths (need a real failed bundle).
 
+## Limits (analyst findings, recorded 2026-11-11)
+
+- **pools.json.lock scope.** One host filesystem. Host drivers reach `/home/ecs-user/iroha3-pools` through the bind mount `-v ${c.mounts.pools}:/pools` (`frontend/server/src/adapters/iroha3-aps.ts:40`). Scenario Job pods mount no pools volume (`deploy/jobs/scenario.yaml:60-82`) and run per-trade `dvp`, which never reads `pools.json` (default path `driver/src/config.rs:78`, used by pay, dvp-shared, wallet, pool-init). A second host or a pod copy would need a shared volume first. The receipts cache is not locked (unique tmp name per writer instead).
+- **R1 scope.** Plain DataspaceRestricted transfers are not R1-sealed: bank-c's validator stores every lane-1 block in plaintext, the read grant is per dataspace, and "R1 is not met" (`reports/a-dataspace-restricted.md:59-73`). Only APS bundles are sealed. Lensa's `lens()` reads the outsider views as the node operator account (`op-*`, `CanReadAllLedgerData`: `frontend/server/src/adapters/iroha3.ts:145`, `readOn` at `:211`, used by `lens()` at `:375-379` for the non-APS path), so those views do not prove what an outsider bank could see.
+
 ## Parked
 
 - **Wallet reads next to a proof (INVESTIGATE, parked 2026-11-10 by lead).** After the restart
