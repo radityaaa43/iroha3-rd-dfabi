@@ -37,7 +37,7 @@ spec:
       # 0700 owner-only /storage starts). Run iroha3d on an owner-only, non-setgid subdir.
       initContainers:
         - name: storage-dir
-          image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
+          image: ghcr.io/radityaaa43/iroha3-rd-node:bad-tag
           command: [sh, -c, 'mkdir -p /pvc/data && chmod 00700 /pvc/data'] # 00700 also clears setgid
           securityContext:
             allowPrivilegeEscalation: false
