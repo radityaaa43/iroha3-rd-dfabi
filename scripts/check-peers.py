@@ -31,6 +31,7 @@ if sts:
         "OnDelete": s["updateStrategy"]["type"] == "OnDelete",
         "image": c["image"] == "ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark",
         "init image": pod["initContainers"][0]["image"] == c["image"],
+        "imagePullSecrets ghcr-pull": pod.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "priorityClassName": ("priorityClassName" not in pod) if c2 else pod["priorityClassName"] == "rd-iroha3-peer",
         "args": c["args"] == ["--sora", "--config", "/config/peer.toml"],
         "startup /livez": c["startupProbe"]["httpGet"]["path"] == "/livez",

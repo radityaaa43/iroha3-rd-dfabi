@@ -157,6 +157,8 @@ if dep:
     if set(ctrs) != {"envoy", "opa"}:
         bad.append(f"gateway: containers {sorted(ctrs)}, want envoy, opa")
     else:
+        if any(x["image"].startswith("ghcr.io/") for x in ctrs.values()) and pod.get("imagePullSecrets") != [{"name": "ghcr-pull"}]:
+            bad.append("gateway: a ghcr.io image needs imagePullSecrets ghcr-pull")
         if ctrs["envoy"]["image"] != envoy_img or ctrs["opa"]["image"] != opa_img:
             bad.append("gateway: images must be exactly the digests given")
         for n, c in ctrs.items():
