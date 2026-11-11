@@ -33,8 +33,12 @@ assert d["metadata"]["namespace"] == "rd-iroha3-" + party, "namespace"
 assert d["metadata"]["labels"] == {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}, "labels"
 assert d["immutable"] is True, "immutable"
 assert set(d["binaryData"]) == {"genesis.signed.nrt"} and base64.b64decode(d["binaryData"]["genesis.signed.nrt"]) == raw, "binaryData"
-assert set(d["data"]) == {"genesis.expected_hash"} and d["data"]["genesis.expected_hash"] == h, "data"
-' "$party" "$T/p" <<<"$out" && ok "$party: manifest structure" || fail "$party: manifest structure"
+# iroha3d requires the file to hold exactly one LF-terminated identity (live S7b: "must contain exactly one LF-terminated canonical public identity")
+assert set(d["data"]) == {"genesis.expected_hash"} and d["data"]["genesis.expected_hash"] == h + "\n", "data must be the hash plus exactly one LF"
+open(sys.argv[3], "w", newline="").write(d["data"]["genesis.expected_hash"])
+' "$party" "$T/p" "$T/cm-value.$party" <<<"$out" && ok "$party: manifest structure" || fail "$party: manifest structure"
+  # what the pod mounts (the ConfigMap VALUE) must be byte-identical to the disk file that `iroha3d --check-config` accepted
+  cmp -s "$T/cm-value.$party" "$T/p/genesis.expected_hash" && ok "$party: ConfigMap value is byte-identical to genesis.expected_hash (one LF)" || fail "$party: ConfigMap value differs from the file the node check accepts"
 done
 [[ $("$G" bi "$T/p" | grep -c '^  name: genesis-a3d75eea$') -eq 1 ]] && ok "hash8 = first 8 hex chars after hash: (lowercased)" || fail "hash8 derivation"
 before=$(find "$T" -type f | sort | xargs cksum)

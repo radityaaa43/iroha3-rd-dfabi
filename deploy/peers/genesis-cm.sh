@@ -3,6 +3,8 @@
 #   deploy/peers/genesis-cm.sh <bi|bank-a|bank-b|bank-c> <public-dir> | kubectl apply -f -
 # ConfigMaps are not in the party-admin Role: pipe this to `kubectl apply` with the ADMIN kubeconfig (not a party one).
 # <public-dir> holds genesis.signed.nrt and genesis.expected_hash (`hash:<64 hex>#<crc>`); hash8 = its first 8 hex chars, lowercase.
+# The expected_hash value ends with exactly one LF: iroha3d refuses the mounted file otherwise ("must contain exactly one LF-terminated
+# canonical public identity", live S7b 2026-11-11), and `$(<file)` strips the LF the file on disk has.
 # Refuses a public dir that holds any *.seed, *.note, *.hybrid or private.key.
 set -euo pipefail
 party=${1:-} dir=${2:-}
@@ -30,5 +32,5 @@ immutable: true
 binaryData:
   genesis.signed.nrt: $(base64 -w0 "$dir/genesis.signed.nrt")
 data:
-  genesis.expected_hash: "$hash"
+  genesis.expected_hash: "$hash\n"
 YAML
