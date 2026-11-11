@@ -24,4 +24,5 @@ jobs:
         run: |
           docker pull -q "$IMAGE" >/dev/null
           case "${{ matrix.row }}" in r0 | r1 | r2) secs=1500 ;; *) secs=240 ;; esac
-          L=1152921504606846976 SECS=$secs WORK="$RUNNER_TEMP/w" bash network/probes/epoch-stall.sh "${{ matrix.row }}"
+          stop=""; [ "${{ matrix.row }}" = r2 ] && stop=30
+          L=1152921504606846976 SECS=$secs STOP_AT=$stop WORK="$RUNNER_TEMP/w" bash network/probes/epoch-stall.sh "${{ matrix.row }}"

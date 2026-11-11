@@ -113,11 +113,20 @@ while ((SECONDS < end)); do
   h=$(jq -r '.blocks // empty' <<<"$st" 2>/dev/null)
   echo "t=$((SECS - (end - SECONDS)))s height=${h:-?} peers=$(jq -r '.peers // "?"' <<<"$st" 2>/dev/null) non_empty=$(jq -r '.blocks_non_empty // "?"' <<<"$st" 2>/dev/null)"
   last=$h; sleep 5
+  # stop early: node0 unreachable for 60 s, or STOP_AT reached (row r2 needs only to pass the old epoch end)
+  if [[ -z $h ]]; then miss=$((${miss:-0} + 1)); else miss=0; fi
+  ((miss >= 12)) && { echo "node0 unreachable for 60 s: stopping"; break; }
+  [[ -n ${STOP_AT:-} && -n $h && $h -ge $STOP_AT ]] && { echo "height $h >= STOP_AT $STOP_AT: stopping"; break; }
 done
 kill "$traffic" 2>/dev/null
 echo "-- final height ${last:-?}"
 for i in 0 1 2 3; do
   echo "== node$i: $(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} finished={{.State.FinishedAt}}' "probe-n$i")"
+  if [[ $(docker inspect -f '{{.State.Status}}' "probe-n$i") == exited ]]; then
+    echo "-- node$i: ERROR lines and the 25 lines before the first supervisor exit:"
+    docker logs "probe-n$i" 2>&1 | grep -E ' ERROR ' | sed -E 's/\{[^}]{60,}\}/{..}/g' | head -6 | cut -c1-500
+    docker logs "probe-n$i" 2>&1 | grep -v 'peer_monitor' | awk '/Supervisor observed child exit/ && !f {f=1; for (k=NR-25; k<NR; k++) if (k>0) print buf[k%26]} {buf[NR%26]=$0}' | sed -E 's/\{[^}]{60,}\}/{..}/g' | cut -c1-400
+  fi
   echo "-- node$i decisive lines (any level):"
   docker logs "probe-n$i" 2>&1 | grep -iE 'MissingNextKagemushaMintFinalityEpochId|provisioned Pasta|top-up or epoch-boundary|fail-stop|fail stop|epoch boundary|next_epoch' | sed -E 's/\{[^}]{60,}\}/{..}/g' | sort -u | head -4 | cut -c1-420
   echo "-- node$i last 12 lines without peer_monitor/alias noise:"
