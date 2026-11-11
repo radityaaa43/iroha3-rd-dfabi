@@ -20,6 +20,8 @@ refuse "no arguments" "usage"
 refuse "unknown party" "usage" nobody $H $CIDR
 refuse "bad genesis hash" "hash8" bi nothex $CIDR
 refuse "bad cidr" "cidr" bi $H not-a-cidr
+refuse "a /24 bank-c range" "/32" bi $H 203.0.113.0/24
+refuse "0.0.0.0/0" "/32" bi $H 0.0.0.0/0
 refuse "missing cidr" "usage" bi $H
 
 for p in bi bank-a bank-b; do
