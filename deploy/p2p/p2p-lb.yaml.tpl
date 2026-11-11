@@ -2,8 +2,9 @@
 # Only the SoraNet p2p port 1337: never Torii 8080 (that stays behind the namespace's gateway, S14). The address that the cloud
 # assigns goes into network/public/peers.addr.json (field `external`), and from there into `public_address` / `trusted_peers`.
 # externalTrafficPolicy Local keeps the client source IP, which the peers-p2p ipBlock needs [unverified: test before S8].
-# [unverified] The LB is reachable from the internet unless an access-control list is set; the ACL annotation names and the
-# source ranges of the other clusters are not decided here (SoraNet handshake still authenticates the peer).
+# loadBalancerSourceRanges = the peer cluster's egress address(es) as /32 entries (render.sh --external-cidr, never wider).
+# [unverified] whether the Alibaba cloud controller maps loadBalancerSourceRanges to an LB access-control list; the
+# peers-p2p NetworkPolicy (ipBlock, same /32 list) is the second layer.
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,6 +16,8 @@ metadata:
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
+  loadBalancerSourceRanges:
+@SOURCE_RANGES@
   selector:
     app.kubernetes.io/part-of: rd-iroha3
     rd-iroha3/party: "@PARTY@"
