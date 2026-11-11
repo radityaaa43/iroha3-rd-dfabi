@@ -38,8 +38,11 @@ metadata:
     app.kubernetes.io/part-of: rd-iroha3
 rules:
   - apiGroups: [""]
-    resources: [services, configmaps, persistentvolumeclaims, pods, pods/log]
+    resources: [services, configmaps, persistentvolumeclaims, pods]
     verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get, list, watch]
   - apiGroups: [apps]
     resources: [statefulsets, deployments]
     verbs: [get, list, watch, create, update, patch, delete]
