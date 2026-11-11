@@ -232,10 +232,13 @@ def cmd_genesis(a):
     stake = a.stake_asset
     assert any(isinstance(i, dict) and i.get("Register", {}).get("AssetDefinition", {}).get("id") == stake
                for tx in g["transactions"] for i in tx["instructions"]), "stake asset not registered in genesis"
-    lane_ins = []
+    # One Mint of the whole lane stake per validator BEFORE its first lane Register: fastpq chains the transfer deltas of a
+    # transaction from the first delta's balance snapshot and does not see Mints, so a Mint between two Registers of the
+    # same validator in one transaction leaves the second bond with "before=0" (CI run 43037250866 warning).
+    lane_ins = [{"Mint": {"Asset": {"destination": stake + "#" + v["validator"], "object": str(int(v["initial_stake"]) * len(lanes))}}}
+                for v in v0]
     for lane in lanes:
         for v in v0:
-            lane_ins.append({"Mint": {"Asset": {"destination": stake + "#" + v["validator"], "object": v["initial_stake"]}}})
             lane_ins.append({"RegisterPublicLaneValidator": {**v, "lane_id": lane}})
             lane_ins.append({"ActivatePublicLaneValidator": {"lane_id": lane, "validator": v["validator"]}})
     g["transactions"].append({"instructions": lane_ins, "ivm_triggers": [], "topology": []})
