@@ -54,6 +54,30 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       priorityClassName: rd-iroha3-peer # cluster 1 only (deploy/ns/priorityclass.yaml)
+      # Keep the 3 GiB peers off two nodes that are full (disk-attach slots, memory) and off each other. A
+      # topologySpreadConstraint only counts pods of its own namespace, so the three peers (one per namespace) would not
+      # see each other: soft podAntiAffinity with a namespaceSelector spreads them across the rd-iroha3 namespaces.
+      # S7 window prerequisite (read-only, per candidate node): disk-attach slots left (cluster-1 slots were full before).
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [member-16033-node, member-16034-node]
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: rd-iroha3
+                    rd-iroha3/role: peer
+                namespaceSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: rd-iroha3
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -68,6 +92,13 @@ spec:
         - name: storage-dir
           image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark
           command: [sh, -c, 'mkdir -p /pvc/data && chmod 00700 /pvc/data'] # 00700 also clears setgid
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
