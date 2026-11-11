@@ -118,7 +118,7 @@ pub struct Movement {
     pub dataspace: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Leg {
     pub asset_definition: String,
     pub quantity: String,
@@ -127,7 +127,7 @@ pub struct Leg {
     pub to: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Dvp {
     pub settlement_id: String,
     pub delivery: Leg,
@@ -157,6 +157,12 @@ pub struct Grant {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Consent {
     pub debited_asset: String,
+    /// global | dataspace:<n>: the balance bucket `debited_asset` names. A DvP leg carries no scope (SettlementLeg has none,
+    /// core takes the bucket from this consent: isi/settlement.rs resolve_authorized_settlement_leg_asset_ids); null when
+    /// `debited_asset` does not parse as an asset id.
+    pub debited_scope: Option<String>,
+    /// n of `dataspace:<n>`, else null.
+    pub debited_dataspace: Option<u64>,
     pub intent_hash: String,
     pub settlement_id: String,
 }

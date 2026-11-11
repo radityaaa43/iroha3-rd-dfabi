@@ -15,6 +15,22 @@
         "debited_asset": {
           "type": "string"
         },
+        "debited_dataspace": {
+          "description": "n of `dataspace:<n>`, else null.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "debited_scope": {
+          "description": "global | dataspace:<n>: the balance bucket `debited_asset` names. A DvP leg carries no scope (SettlementLeg has none, core takes the bucket from this consent: isi/settlement.rs resolve_authorized_settlement_leg_asset_ids); null when `debited_asset` does not parse as an asset id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "intent_hash": {
           "type": "string"
         },

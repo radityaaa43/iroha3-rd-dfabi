@@ -8,7 +8,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use iroha_data_model::{
-    asset::AssetBalanceScope,
+    asset::{AssetBalanceScope, AssetId},
     isi::{
         BurnBox, GrantBox, Instruction, InstructionBox, MintBox, RegisterBox, SetKeyValueBox, TransferBox, instruction_wire_id,
         settlement::{DvpIsi, SettlementInstructionBox, SettlementLeg},
@@ -23,6 +23,28 @@ pub fn decode(body: &[u8], format: Format) -> Result<TxView, DecodeErr> {
     // A panic inside a decoder must fail closed, not kill the server thread silently.
     catch_unwind(AssertUnwindSafe(|| decode_inner(body, format)))
         .unwrap_or_else(|_| Err(DecodeErr::new("decode_failed", "decoder panicked")))
+}
+
+/// The rendered DvP box that Lensa pre-registers: what `iroha -o ledger settlement dvp ...` writes, a JSON list of ONE
+/// instruction whose element is the canonical Norito frame of the InstructionBox in base64 (`["<base64>"]`). It is parsed by
+/// the data model's own `Vec<InstructionBox>` JSON reader (which runs `decode_canonical` on the frame), so a frame that is not
+/// byte-identical to its canonical form is refused as Torii would. The result is the same `Instr` the tx decoder prints, so for
+/// a DvP `intent_hash` is `DvpIsi::intent_hash` (isi/settlement.rs:624) of the decoded instruction. Any other instruction
+/// comes back as its own kind; the caller refuses it.
+pub fn decode_intent(body: &[u8], format: Format) -> Result<Instr, DecodeErr> {
+    catch_unwind(AssertUnwindSafe(|| decode_intent_inner(body, format)))
+        .unwrap_or_else(|_| Err(DecodeErr::new("decode_failed", "decoder panicked")))
+}
+
+fn decode_intent_inner(body: &[u8], format: Format) -> Result<Instr, DecodeErr> {
+    if format != Format::Json {
+        return Err(DecodeErr::new("bad_content_type", "the rendered DvP box is application/json: [\"<base64>\"]"));
+    }
+    let list = norito::json::from_slice::<Vec<InstructionBox>>(body).map_err(|e| DecodeErr::new("decode_failed", format!("not a list of instructions: {e}")))?;
+    match list.as_slice() {
+        [one] => Ok(instr(one)),
+        _ => Err(DecodeErr::new("decode_failed", "the box must hold exactly one instruction")),
+    }
 }
 
 fn decode_inner(body: &[u8], format: Format) -> Result<TxView, DecodeErr> {
@@ -280,7 +302,16 @@ fn dvp(d: &DvpIsi) -> Instr {
 /// `{"debited_asset":..,"intent_hash":..,"settlement_id":..}`, all strings; anything else is not a consent (None).
 fn consent(v: &serde_json::Value) -> Option<Consent> {
     let s = |k: &str| v.get(k)?.as_str().map(str::to_string);
-    Some(Consent { debited_asset: s("debited_asset")?, intent_hash: s("intent_hash")?, settlement_id: s("settlement_id")? })
+    let debited_asset = s("debited_asset")?;
+    // The bucket the consent debits: parsed with the data model's own AssetId literal parser (`<def>#<account>[#dataspace:<n>]`).
+    let (debited_scope, debited_dataspace) = match debited_asset.parse::<AssetId>() {
+        Ok(a) => {
+            let (sc, ds) = scope(a.scope());
+            (Some(sc), ds)
+        }
+        Err(_) => (None, None),
+    };
+    Some(Consent { debited_asset, debited_scope, debited_dataspace, intent_hash: s("intent_hash")?, settlement_id: s("settlement_id")? })
 }
 
 
@@ -408,6 +439,25 @@ mod tests {
         assert_eq!((x.payment.quantity.as_str(), x.payment.from.clone(), x.payment.to.clone()), ("50", acct(2).to_string(), acct(1).to_string()));
     }
 
+    /// The balance bucket a DvP debits is named by the consent (the legs carry none): same encoding as the transfer scope.
+    #[test]
+    fn consent_names_its_balance_scope() {
+        let scope_of = |debited: &str| {
+            let payload = Json::from_str_norito(&format!(r#"{{"debited_asset":"{debited}","intent_hash":"h","settlement_id":"s"}}"#)).unwrap();
+            let g = Grant::account_permission(Permission::new("CanExecuteSettlement".to_string(), payload), acct(1));
+            let v = ok(&norito(&tx(2, vec![g.into()])));
+            let [Instr::Grant(g)] = v.instructions.as_slice() else { panic!("{:?}", v.instructions) };
+            let c = g.consent.as_ref().expect("consent");
+            assert_eq!(c.debited_asset, debited);
+            (c.debited_scope.clone(), c.debited_dataspace)
+        };
+        assert_eq!(scope_of(&asset(1, 2, Some(1)).to_string()), (Some("dataspace:1".to_string()), Some(1)));
+        assert_eq!(scope_of(&asset(1, 2, Some(7)).to_string()), (Some("dataspace:7".to_string()), Some(7)));
+        assert_eq!(scope_of(&asset(1, 2, None).to_string()), (Some("global".to_string()), None));
+        // not an asset id: no scope, the rego treats null as a failed comparison
+        assert_eq!(scope_of("not-an-asset"), (None, None));
+    }
+
     #[test]
     fn other_instruction_is_unknown_with_raw_kind() {
         let v = ok(&norito(&tx(1, vec![Log { level: Level::INFO, msg: "x".into() }.into()])));
@@ -442,18 +492,27 @@ mod tests {
         }
     }
 
-    /// POST /decode through the real server: the raw body and the OPA `http.send` shape give the same answer.
-    fn post(ct: &str, body: &[u8]) -> (u16, String) {
+    /// The real server (real decoders, fake Torii) on a loopback port; one per test.
+    fn real_server() -> std::net::SocketAddr {
         let l = std::net::TcpListener::bind(("localhost", 0)).unwrap();
         let addr = l.local_addr().unwrap();
-        std::thread::spawn(move || crate::txserve::serve(l, decode));
+        let dir = crate::intents::tests::tmpdir("decode-srv");
+        let ctx = std::sync::Arc::new(crate::txserve::test_ctx(decode, decode_intent, &dir, crate::intents::now_ms()));
+        std::thread::spawn(move || crate::txserve::serve(l, ctx));
+        addr
+    }
+    fn send(addr: std::net::SocketAddr, path: &str, ct: &str, body: &[u8]) -> (u16, String) {
         let mut c = std::net::TcpStream::connect(addr).unwrap();
-        let mut req = format!("POST /decode HTTP/1.1\r\nHost: x\r\nContent-Type: {ct}\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        let mut req = format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: {ct}\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         req.extend_from_slice(body);
         c.write_all(&req).unwrap();
         let mut out = String::new();
         c.read_to_string(&mut out).unwrap();
         (out[9..12].parse().unwrap(), out.split_once("\r\n\r\n").unwrap().1.to_string())
+    }
+    /// POST /decode through the real server: the raw body and the OPA `http.send` shape give the same answer.
+    fn post(ct: &str, body: &[u8]) -> (u16, String) {
+        send(real_server(), "/decode", ct, body)
     }
     fn wrap(bytes: &[u8], ct: &str) -> Vec<u8> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
@@ -476,6 +535,81 @@ mod tests {
         assert_eq!(post("application/json", &wrap(&good, "text/plain")).0, 415);
         assert_eq!(post("application/json", br#"{"b64":"!!","ct":"application/x-norito"}"#).0, 422);
         assert_eq!(post("application/json", br#"{"b64":"AAAA"}"#).0, 415);
+    }
+
+    fn rendered(d: &DvpIsi) -> String {
+        norito::json::to_string(&vec![InstructionBox::from(d.clone())]).unwrap()
+    }
+
+    /// Lensa's box (`["<base64>"]`) decodes to the DvP and its intent hash is upstream's `DvpIsi::intent_hash`.
+    #[test]
+    fn rendered_box_decodes_to_the_dvp_with_the_upstream_intent_hash() {
+        let d = dvp_isi();
+        let body = rendered(&d);
+        assert!(body.starts_with("[\"") && body.ends_with("\"]"), "{body}");
+        let Instr::Dvp(x) = decode_intent(body.as_bytes(), Format::Json).unwrap_or_else(|e| panic!("{e:?}")) else { panic!("not a dvp") };
+        assert_eq!(x.intent_hash, d.intent_hash().to_string());
+        assert_eq!((x.settlement_id.as_str(), x.order.as_str(), x.atomicity.as_str()), ("dvp_test_1", "delivery_then_payment", "all_or_nothing"));
+        assert_eq!((x.delivery.from.clone(), x.delivery.to.clone(), x.delivery.quantity.as_str()), (acct(1).to_string(), acct(2).to_string(), "5"));
+        assert_eq!((x.payment.from.clone(), x.payment.to.clone(), x.payment.quantity.as_str()), (acct(2).to_string(), acct(1).to_string(), "50"));
+        // the same instruction inside a tx prints the same hash: the box and the tx path cannot disagree
+        let v = ok(&norito(&tx(1, vec![d.clone().into()])));
+        let [Instr::Dvp(t)] = v.instructions.as_slice() else { panic!("{:?}", v.instructions) };
+        assert_eq!(t.intent_hash, x.intent_hash);
+        // a different settlement is a different intent
+        let mut other = dvp_isi();
+        other.settlement_id = SettlementId::new("dvp_test_2".parse().unwrap());
+        let Instr::Dvp(y) = decode_intent(rendered(&other).as_bytes(), Format::Json).unwrap() else { panic!() };
+        assert_ne!(y.intent_hash, x.intent_hash);
+    }
+
+    #[test]
+    fn rendered_box_refuses_what_is_not_exactly_one_canonical_dvp() {
+        let d = dvp_isi();
+        let body = rendered(&d);
+        // other instruction: decoded as its own kind (the route refuses it as not_dvp)
+        let m = norito::json::to_string(&vec![InstructionBox::from(Mint::asset_quantity(1u32, asset(1, 2, None)))]).unwrap();
+        assert!(matches!(decode_intent(m.as_bytes(), Format::Json), Ok(Instr::Mint(_))));
+        // two instructions, none, not a list, not base64, a truncated frame, a Norito media type
+        let one = body.trim_start_matches('[').trim_end_matches(']');
+        for bad in [format!("[{one},{one}]"), "[]".to_string(), one.to_string(), "[\"%%%\"]".to_string(), "{}".to_string(), "".to_string()] {
+            assert!(decode_intent(bad.as_bytes(), Format::Json).is_err(), "{bad}");
+        }
+        let cut = &one[..one.len() - 9];
+        assert!(decode_intent(format!("[{cut}\"]").as_bytes(), Format::Json).is_err());
+        assert_eq!(decode_intent(body.as_bytes(), Format::Norito).unwrap_err().error.code, "bad_content_type");
+    }
+
+    /// The whole intent flow through the real server and decoders: register the box at /gw/intent, decode the buyer's consent
+    /// tx, ask /intent/lookup with the hash the consent names, get `active` once.
+    #[test]
+    fn register_box_then_the_buyers_consent_finds_it_active_once() {
+        let srv = real_server();
+        let d = dvp_isi();
+        let h = d.intent_hash().to_string();
+        let (s, b) = send(srv, "/gw/intent", "application/json", rendered(&d).as_bytes());
+        assert_eq!(s, 200, "{b}");
+        let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+        assert_eq!((v["intent_hash"] == h.as_str(), v["buyer"] == acct(2).to_string().as_str(), v["status"] == "active"), (true, true, true));
+        // the consent the buyer (account 2) signs names that hash, in the dataspace-1 bucket
+        let payload = Json::from_str_norito(&format!(r#"{{"debited_asset":"{}","intent_hash":"{h}","settlement_id":"dvp_test_1"}}"#, asset(2, 2, Some(1)))).unwrap();
+        let g = Grant::account_permission(Permission::new("CanExecuteSettlement".to_string(), payload), acct(1));
+        let (s, b) = send(srv, "/decode", "application/x-norito", &norito(&tx(2, vec![g.into()])));
+        assert_eq!(s, 200, "{b}");
+        let c: serde_json::Value = serde_json::from_str(&b).unwrap();
+        let consent = &c["instructions"][0]["consent"];
+        assert_eq!((consent["intent_hash"] == h.as_str(), consent["debited_scope"].as_str(), consent["debited_dataspace"].as_u64()), (true, Some("dataspace:1"), Some(1)));
+        let ask = || {
+            let (s, b) = send(srv, "/intent/lookup", "application/json", serde_json::json!({"intent_hash": c["instructions"][0]["consent"]["intent_hash"], "authority": c["authority"]}).to_string().as_bytes());
+            assert_eq!(s, 200, "{b}");
+            serde_json::from_str::<serde_json::Value>(&b).unwrap()["status"].as_str().unwrap().to_string()
+        };
+        assert_eq!((ask(), ask()), ("active".to_string(), "consumed".to_string()));
+        // the box decode route and a box that is not a canonical frame
+        let (s, b) = send(srv, "/intent/decode", "application/json", rendered(&d).as_bytes());
+        assert!(s == 200 && b.contains(&h), "{s} {b}");
+        let (s, b) = send(srv, "/gw/intent", "application/json", br#"["AAAA"]"#);
+        assert_eq!(s, 422, "{b}");
     }
 
     fn cap(dir: &std::path::Path, prefix: &str) -> Option<Vec<u8>> {
@@ -522,6 +656,7 @@ mod tests {
             let c = g.consent.as_ref().expect("007 is a CanExecuteSettlement consent");
             assert!(v.signature_ok && g.permission.as_deref() == Some("CanExecuteSettlement"));
             assert!(c.debited_asset.ends_with("#dataspace:1"), "{}", c.debited_asset);
+            assert_eq!((c.debited_scope.as_deref(), c.debited_dataspace), (Some("dataspace:1"), Some(1)));
             if let (Some(i), Some(s)) = (&intent, &sid) {
                 assert_eq!((&c.intent_hash, &c.settlement_id), (i, s));
             }
@@ -536,6 +671,12 @@ mod tests {
             if let (Some(i), Some(s)) = (&intent, &sid) {
                 assert_eq!((&d.intent_hash, &d.settlement_id), (i, s));
             }
+            seen += 1;
+        }
+        // Lensa's rendered DvP box (`dvp-rendered.json`, what `iroha -o` wrote) hashes to the same intent as the captured tx
+        if let (Ok(r), Some(i)) = (std::fs::read(dir.join("dvp-rendered.json")), &intent) {
+            let Instr::Dvp(d) = decode_intent(&r, Format::Json).unwrap_or_else(|e| panic!("{e:?}")) else { panic!("rendered box is not a dvp") };
+            assert_eq!(&d.intent_hash, i);
             seen += 1;
         }
         assert!(seen > 0, "RD_DFABI_TXCAP_DIR holds none of 001/002/003/007/008 *.body");

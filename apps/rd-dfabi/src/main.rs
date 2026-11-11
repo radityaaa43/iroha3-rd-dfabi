@@ -6,6 +6,7 @@
 mod api;
 mod backend;
 mod cmds;
+mod intents;
 mod probe;
 mod store;
 mod tree;
@@ -15,6 +16,7 @@ mod aps;
 mod decode;
 mod txserve;
 mod txview;
+mod usage;
 
 // The crypto behind `Backend`: upstream calls in the aps build, "needs --features aps" errors in the light one.
 #[cfg(feature = "aps")]
@@ -92,11 +94,28 @@ struct DecodeTxArgs {
 }
 #[derive(Subcommand)]
 enum DecodeServe {
-    /// HTTP sidecar: POST /decode with the raw body and its Content-Type header -> JSON. Runs until killed.
+    /// HTTP sidecar for the OPA gateway: POST /decode, /intent/decode, /intent/register (/gw/intent), /intent/lookup,
+    /// /usage (/gw/usage), JSON in and out. Runs until killed. State (pending DvP intents, the usage journal) is kept
+    /// under --state-dir; a pod restart loses it, which fails closed.
     Serve {
         /// host:port to bind (no default; the gateway pod binds loopback).
         #[arg(long)]
         listen: String,
+        /// Directory for intents.json and journal.jsonl (an emptyDir in the pod). Created if missing.
+        #[arg(long)]
+        state_dir: PathBuf,
+        /// This party's own Torii, http://host:port (no TLS, no path, no default): where /usage reads tx status.
+        #[arg(long)]
+        torii_url: String,
+        /// token=asset definition id, repeatable (`--asset RD=<id> --asset DFABI=<id>`): the assets /usage reports and the journal records.
+        #[arg(long = "asset", value_parser = parse_asset)]
+        assets: Vec<(String, String)>,
+        /// How long a registered DvP intent stays usable.
+        #[arg(long, default_value_t = 600)]
+        intent_ttl_secs: u64,
+        /// Most active intents at once; a registration over it is refused (HTTP 503).
+        #[arg(long, default_value_t = 1024)]
+        intent_cap: usize,
     },
 }
 #[derive(Subcommand)]
@@ -136,14 +155,46 @@ fn decode_body(_: &[u8], _: txview::Format) -> Result<txview::TxView, txview::De
     Err(txview::DecodeErr::new("needs_decode_feature", "rd-dfabi was built without --features decode"))
 }
 
+/// The rendered-DvP-box decoder, same rule.
+#[cfg(feature = "decode")]
+use decode::decode_intent as decode_box;
+#[cfg(not(feature = "decode"))]
+fn decode_box(_: &[u8], _: txview::Format) -> Result<txview::Instr, txview::DecodeErr> {
+    Err(txview::DecodeErr::new("needs_decode_feature", "rd-dfabi was built without --features decode"))
+}
+
+fn parse_asset(s: &str) -> Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((t, d)) if !t.is_empty() && !d.is_empty() => Ok((t.to_string(), d.to_string())),
+        _ => Err("expected TOKEN=ASSET_DEFINITION_ID".into()),
+    }
+}
+
 fn decode_tx(cli: &Cli, args: &DecodeTxArgs) -> (String, u8) {
     use txview::{DecodeErr, content_format, render};
-    if let Some(DecodeServe::Serve { listen }) = &args.serve {
+    if let Some(DecodeServe::Serve { listen, state_dir, torii_url, assets, intent_ttl_secs, intent_cap }) = &args.serve {
+        let io = |m: String| render(Err(DecodeErr::new("io", m)));
+        let now = intents::now_ms();
+        let ctx = (|| -> Result<txserve::Ctx, String> {
+            Ok(txserve::Ctx {
+                decode: decode_body,
+                intent_decode: decode_box,
+                intents: std::sync::Mutex::new(intents::IntentStore::open(state_dir, intent_ttl_secs.saturating_mul(1000), *intent_cap).map_err(|e| format!("open {}: {e}", state_dir.display()))?),
+                journal: std::sync::Mutex::new(usage::Journal::open(state_dir, now).map_err(|e| format!("open {}: {e}", state_dir.display()))?),
+                assets: assets.iter().cloned().collect(),
+                status: usage::torii_status(torii_url)?,
+                now: Box::new(intents::now_ms),
+            })
+        })();
+        let ctx = match ctx {
+            Ok(c) => std::sync::Arc::new(c),
+            Err(m) => return io(m),
+        };
         let l = match TcpListener::bind(listen) {
             Ok(l) => l,
-            Err(e) => return render(Err(DecodeErr::new("io", format!("bind {listen}: {e}")))),
+            Err(e) => return io(format!("bind {listen}: {e}")),
         };
-        return match txserve::serve(l, decode_body) {
+        return match txserve::serve(l, ctx) {
             Ok(()) => (String::new(), 0),
             Err(e) => render(Err(DecodeErr::new("io", e.to_string()))),
         };
