@@ -182,6 +182,11 @@ else:
             bad.append(f"Service gateway-lb: ACL annotations (on/white/acl-id) missing: {an}")
         if lb["spec"]["type"] != "LoadBalancer" or not lb["spec"].get("loadBalancerSourceRanges"):
             bad.append("Service gateway-lb: LoadBalancer with loadBalancerSourceRanges")
+        # Same as the other CLBs on this platform (clb-etp-local gotcha, fabric arma lb-1..4): externalTrafficPolicy Cluster + ENI backends.
+        if lb["spec"].get("externalTrafficPolicy") != "Cluster":
+            bad.append(f"Service gateway-lb: externalTrafficPolicy must be Cluster, got {lb['spec'].get('externalTrafficPolicy')}")
+        if an.get("service.beta.kubernetes.io/backend-type") != "eni":
+            bad.append("Service gateway-lb: annotation service.beta.kubernetes.io/backend-type: eni missing")
 
 np = need("NetworkPolicy", "gateway-ingress")
 if np:
