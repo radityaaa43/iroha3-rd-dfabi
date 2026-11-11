@@ -11,11 +11,11 @@ env:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        row: [r0, r1, r2, r3, r4]
+        row: [r1, r2, r3, r4]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -23,5 +23,5 @@ jobs:
       - name: "row ${{ matrix.row }}"
         run: |
           docker pull -q "$IMAGE" >/dev/null
-          case "${{ matrix.row }}" in r0 | r1 | r2) secs=840 ;; *) secs=240 ;; esac
+          case "${{ matrix.row }}" in r0 | r1 | r2) secs=1500 ;; *) secs=240 ;; esac
           L=1152921504606846976 SECS=$secs WORK="$RUNNER_TEMP/w" bash network/probes/epoch-stall.sh "${{ matrix.row }}"

@@ -115,7 +115,12 @@ while ((SECONDS < end)); do
   last=$h; sleep 5
 done
 kill "$traffic" 2>/dev/null
-echo "-- final height ${last:-?}; decisive log lines (node0):"
-for i in 0 1 2 3; do echo "node$i:"; docker logs "probe-n$i" 2>&1 | grep -iE 'MissingNextKagemushaMintFinalityEpochId|requires a provisioned Pasta epoch authority|Kagemusha V1 top-up or epoch-boundary' | sort -u | head -3 | cut -c1-400; done
-echo "-- node0 WARN/ERROR sample (not peer_monitor noise):"; docker logs probe-n0 2>&1 | grep -E ' (WARN|ERROR) ' | grep -v 'peer_monitor\|alias\|onboard' | tail -8 | cut -c1-300
+echo "-- final height ${last:-?}"
+for i in 0 1 2 3; do
+  echo "== node$i: $(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} finished={{.State.FinishedAt}}' "probe-n$i")"
+  echo "-- node$i decisive lines (any level):"
+  docker logs "probe-n$i" 2>&1 | grep -iE 'MissingNextKagemushaMintFinalityEpochId|provisioned Pasta|top-up or epoch-boundary|fail-stop|fail stop|epoch boundary|next_epoch' | sed -E 's/\{[^}]{60,}\}/{..}/g' | sort -u | head -4 | cut -c1-420
+  echo "-- node$i last 12 lines without peer_monitor/alias noise:"
+  docker logs "probe-n$i" 2>&1 | grep -vE 'peer_monitor|alias|onboard|^\s*$|^Location|Connection refused|^Caused|^   [0-9]:' | tail -12 | sed -E 's/\{[^}]{60,}\}/{..}/g' | cut -c1-360
+done
 for i in 0 1 2 3; do docker rm -f "probe-n$i" >/dev/null 2>&1; done
