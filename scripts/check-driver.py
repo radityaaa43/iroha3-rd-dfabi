@@ -45,6 +45,8 @@ if cm:
                 bad.append(f"rd-dfabi.toml {k} = {cfg.get(k)!r}, want {v!r}")
         if cfg.get("assets") != {"rd": "7onbjg2gRXveoAAUFsohCZyGW98t", "dfabi": "4mBWK1JCwQdHLDPpuVKc56eLsXka"}:
             bad.append(f"assets must be the Base58 definition ids: {cfg.get('assets')}")
+        if cfg.get("party") != party:  # lead condition (node-build#21): no bank may rely on the default `bi`
+            bad.append(f"rd-dfabi.toml party = {cfg.get('party')!r}, want {party!r} (set explicitly per party)")
         if cfg.get("lanes") != {"rd": 1, "dfabi": 2}:
             bad.append(f"lanes: {cfg.get('lanes')}")
         if sorted(cfg.get("torii", {})) != ["bank-a", "bank-b", "bank-c", "bi"]:
