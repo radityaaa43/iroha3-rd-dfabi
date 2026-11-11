@@ -49,8 +49,8 @@ gov_id=$("$IROHA" tools address convert "$(jq -r '."bi-gov"' "$P/accounts.json")
 grants() { jq -r --arg n "$1" '[.transactions[].instructions[] | objects | select(.Grant.Permission.object.name? == $n) | .Grant.Permission.destination] | unique | join(",")' "$m"; }
 [[ $(grants CanEnactGovernance) == "$gov_id" ]] && ok "S3: CanEnactGovernance only at bi-gov" || fail "CanEnactGovernance holders: $(grants CanEnactGovernance | cut -c1-60)"
 [[ $(grants CanReadAllLedgerData) == "$bi_id" ]] && ok "S3: CanReadAllLedgerData only at bi" || fail "CanReadAllLedgerData holders: $(grants CanReadAllLedgerData | cut -c1-60)"
-[[ $(jq -r '[.transactions[].parameters.custom // empty | .sumeragi_npos_parameters.payload.epoch_length_blocks // empty][0]' "$m") == 1152921504606846976 ]] \
-  && ok "S5b: epoch_length_blocks = 2^60" || fail "epoch_length_blocks: $(jq -c '[.transactions[].parameters.custom // empty | .sumeragi_npos_parameters.payload.epoch_length_blocks // empty]' "$m")"
+[[ $(jq -r '[.transactions[].parameters.custom // empty | .sumeragi_npos_parameters.payload.epoch_length_blocks // empty][0]' "$m") == ${EPOCH_LENGTH:-1152921504606846976} ]] \
+  && ok "S5b: epoch_length_blocks = ${EPOCH_LENGTH:-2^60}" || fail "epoch_length_blocks: $(jq -c '[.transactions[].parameters.custom // empty | .sumeragi_npos_parameters.payload.epoch_length_blocks // empty]' "$m")"
 [[ $(jq -r '[.transactions[].topology[]?.peer] | sort | join(",")' "$m") == $(jq -r '[.[].public_key] | sort | join(",")' "$P/peers.json") ]] && ok "topology = the 4 org peer keys" || fail "topology differs from peers.json"
 [[ $(jq -r '[.kagemusha_mint_finality.epoch_roster.validators[].validator] | sort | join(",")' "$m") == $(jq -r '[.[].public_key] | sort | join(",")' "$P/peers.json") ]] && ok "mint-finality roster = the 4 org peer keys" || fail "roster differs"
 [[ $(jq '[.transactions[].instructions[] | objects | select(has("RegisterPublicLaneValidator"))] | length' "$m") -eq 12 ]] && ok "12 lane validators (4 x lanes 0,1,2)" || fail "lane validator count"

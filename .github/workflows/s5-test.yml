@@ -15,6 +15,10 @@ jobs:
   s5:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        epoch: [3600, 1152921504606846976] # bisect: stock default vs the S5b value (2^60)
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -24,4 +28,4 @@ jobs:
           docker pull -q "$NODE_IMAGE" >/dev/null
           docker pull -q "$DRIVER_IMAGE" >/dev/null
       - name: "scripts/test-s5.sh (RUN_CHAIN=1)"
-        run: RUN_CHAIN=1 CHAIN_WAIT=180 bash scripts/test-s5.sh
+        run: EPOCH_LENGTH=${{ matrix.epoch }} RUN_CHAIN=1 CHAIN_WAIT=120 bash scripts/test-s5.sh
