@@ -43,7 +43,7 @@ done
 [[ $("$G" bi "$T/p" | grep -c '^  name: genesis-a3d75eea$') -eq 1 ]] && ok "hash8 = first 8 hex chars after hash: (lowercased)" || fail "hash8 derivation"
 before=$(find "$T" -type f | sort | xargs cksum)
 "$G" bi "$T/p" >/dev/null; [[ $(find "$T" -type f | sort | xargs cksum) == "$before" ]] && ok "writes nothing" || fail "files changed"
-[[ -f network/public/genesis.expected_hash && -f network/public/genesis.signed.nrt ]] && { "$G" bi network/public | grep -q "^  name: genesis-a3d75eea$" && ok "real network/public accepted" || fail "real network/public"; }
+[[ -f network/public/genesis.expected_hash && -f network/public/genesis.signed.nrt ]] && { [[ $("$G" bi network/public | grep -c "^  name: genesis-a3d75eea$") -eq 1 ]] && ok "real network/public accepted" || fail "real network/public"; }
 refuse "no argument" "usage"
 refuse "one argument" "usage" bi
 refuse "an unknown party" "unknown party" nobody "$T/p"

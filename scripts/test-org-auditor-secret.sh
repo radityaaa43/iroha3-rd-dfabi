@@ -11,6 +11,7 @@ mkdir "$T/bin"
 cat > "$T/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 echo "kubectl $*" >> "$STUB_LOG"
+[[ -n "${STUB_EXISTS:-}" ]] && { echo "Error from server (AlreadyExists): secret exists" >&2; exit 1; }
 if [[ $1 != create ]]; then echo "Error from server (Forbidden): verb $1 on secrets is not allowed" >&2; exit 1; fi
 for a in "$@"; do case $a in --from-file=*) f=${a#--from-file=}; echo "FILE ${f%%=*} $(wc -c < "${f#*=}")" >> "$STUB_LOG" ;; esac; done
 echo "secret created"
@@ -34,5 +35,7 @@ out=$("$S" bank-a "$T/a" 2>&1); rc=$?
 [[ $rc -eq 0 && $out == *"Secret bank-a-auditor-key created in rd-iroha3-bank-a"* ]] && ok "creates bank-a-auditor-key in rd-iroha3-bank-a" || fail "create: rc=$rc $out"
 grep -q "create secret generic bank-a-auditor-key -n rd-iroha3-bank-a" "$STUB_LOG" && grep -q "FILE bank-a-auditor.seed" "$STUB_LOG" && grep -q "FILE bank-a-auditor.hybrid" "$STUB_LOG" && ok "plain create with exactly the two files" || fail "kubectl call: $(cat "$STUB_LOG")"
 [[ $out != *SEED* && $out != *HYBRID* ]] && ok "prints no value" || fail "value printed"
+: > "$STUB_LOG"; out=$(STUB_EXISTS=1 "$S" bank-a "$T/a" 2>&1); rc=$?
+[[ $rc -ne 0 && $out == *AlreadyExists* && $out != *" created in "* ]] && ok "kubectl failure: non-zero exit, no success line (pipefail/rc)" || fail "kubectl failure: rc=$rc $out"
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"

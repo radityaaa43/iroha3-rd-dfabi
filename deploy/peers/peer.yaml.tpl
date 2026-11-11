@@ -88,6 +88,9 @@ spec:
           type: RuntimeDefault
       # fsGroup leaves the PVC root setgid and group-writable (2775); iroha3d then fails P2P startup with
       # "SoraNet handshake negotiation failed". Run iroha3d on an owner-only, non-setgid subdir.
+      # The pod spec carries its own pull secret (the default SA only holds the ACR credentials); same spec as any pull test.
+      imagePullSecrets:
+        - name: ghcr-pull
       initContainers:
         - name: storage-dir
           image: ghcr.io/radityaaa43/iroha3-rd-node:071e281e-stark

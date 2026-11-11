@@ -11,6 +11,7 @@ mkdir "$T/bin"
 cat > "$T/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 echo "kubectl $*" >> "$STUB_LOG"
+[[ -n "${STUB_EXISTS:-}" ]] && { echo "Error from server (AlreadyExists): secret exists" >&2; exit 1; }
 if [[ $1 != create ]]; then echo "Error from server (Forbidden): verb $1 on secrets is not allowed" >&2; exit 1; fi
 for a in "$@"; do case $a in --from-file=*) f=${a#--from-file=}; echo "FILE ${f%%=*}" >> "$STUB_LOG" ;; esac; done
 echo "secret created"
@@ -37,8 +38,8 @@ done
 ! grep -qE "gateway-client-ca|apply|--dry-run" "$STUB_LOG" && ok "init creates no gateway-client-ca and never apply/dry-run" || fail "unexpected kubectl call"
 [[ -z $(find "$W" -name '*.key' -o -name '*.srl' 2>/dev/null) ]] && ok "private keys shredded from the work dir after the Secrets exist" || fail "private material left: $(find "$W" -name '*.key')"
 # the issued material was verified inside init; re-check what stayed public
-openssl x509 -in "$P/bank-a-role-ca.pem" -noout -subject 2>/dev/null | grep -q "iroha3-bank-a-role-ca" && ok "role CA subject names the party" || fail "role CA subject"
-openssl x509 -in "$P/bank-a-role-ca.pem" -noout -text | grep -q "CA:TRUE" && ok "role CA is a CA" || fail "role CA not a CA"
+[[ $(openssl x509 -in "$P/bank-a-role-ca.pem" -noout -subject 2>/dev/null | grep -c "iroha3-bank-a-role-ca") -ge 1 ]] && ok "role CA subject names the party" || fail "role CA subject"
+[[ $(openssl x509 -in "$P/bank-a-role-ca.pem" -noout -text | grep -c "CA:TRUE") -ge 1 ]] && ok "role CA is a CA" || fail "role CA not a CA"
 [[ $(openssl x509 -in "$P/bank-a-role-ca.pem" -noout -issuer) == "$(openssl x509 -in "$P/bank-a-role-ca.pem" -noout -subject | sed 's/subject/issuer/')" ]] && ok "role CA is self-signed (root)" || fail "role CA not self-signed"
 refuse "a second init over an existing work dir" "already" init bank-a "$W"
 
@@ -50,5 +51,7 @@ out=$("$S" trust bank-a "$W" "$T/lensa.pem" "$P/bank-a-role-ca.pem" 2>&1); rc=$?
 echo "-----BEGIN PRIVATE KEY-----" > "$T/bad.pem"
 refuse "a private key given as a trust PEM" "private key" trust bank-a "$W" "$T/bad.pem"
 refuse "trust without any PEM" "usage" trust bank-a "$W"
+: > "$STUB_LOG"; out=$(STUB_EXISTS=1 "$S" trust bank-a "$W" "$T/lensa.pem" "$P/bank-a-role-ca.pem" 2>&1); rc=$?
+[[ $rc -ne 0 && $out == *AlreadyExists* && $out != *" created in "* ]] && ok "kubectl failure: non-zero exit, no success line (pipefail/rc)" || fail "kubectl failure: rc=$rc $out"
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
