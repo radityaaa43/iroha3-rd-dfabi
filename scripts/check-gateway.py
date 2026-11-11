@@ -80,7 +80,12 @@ if cm:
                 driver_paths = ["/settle-grant", "/dvp-native"] + (["/mint"] if party == "bi" else [])
                 # S12/S13 transport A: the party's OWN auditor is reached through its gateway (/keys, /approve; /records on BI only)
                 auditor_exact = ["/keys", "/approve"] + (["/records"] if party == "bi" else [])
-                want_routes = [({"path": p}, "driver") for p in driver_paths] + [({"path": p}, "auditor") for p in auditor_exact]
+                get_only = [{"name": ":method", "string_match": {"exact": "GET"}}]
+                # window B reads served by the party's OWN driver: exact path + GET only (OPA decides who may call)
+                driver_reads = [({"path": "/healthz", "headers": get_only}, "driver"),
+                                ({"prefix": "/tx/", "headers": get_only}, "driver"),
+                                ({"path": "/balance", "headers": get_only}, "driver")]
+                want_routes = [({"path": p}, "driver") for p in driver_paths] + driver_reads + [({"path": p}, "auditor") for p in auditor_exact]
                 if party == "bi":
                     want_routes.append(({"prefix": "/records/"}, "auditor"))
                 got = [(r["match"], r["route"]["cluster"]) for r in routes[:-1]]

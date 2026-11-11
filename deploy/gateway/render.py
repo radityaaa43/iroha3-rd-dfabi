@@ -42,6 +42,13 @@ per_route = {AUTHZ: {"@type": "type.googleapis.com/envoy.extensions.filters.http
 driver_paths = ["/settle-grant", "/dvp-native"] + (["/mint"] if party == "bi" else [])
 routes = [{"match": {"path": p}, "route": {"cluster": "driver", "timeout": "330s"}, "typed_per_filter_config": per_route}
           for p in driver_paths]
+# Window B reads served by the party's OWN driver (driver/src/server.rs): exact path + GET only, anything else falls to Torii.
+# /tx/ is a prefix + GET (envoy RE2 refuses a {64} regex: program size 132 > 100); the 64-hex check is OPA row 12 and the driver (tx_detail::check_hash). /tx/{64hex} and /balance are signed queries with that driver's own key; OPA (besu rego rows 9, 12, 14) decides who may call.
+get_only = [{"name": ":method", "string_match": {"exact": "GET"}}]
+routes += [{"match": m, "route": {"cluster": "driver", "timeout": "60s"}, "typed_per_filter_config": per_route}
+           for m in ({"path": "/healthz", "headers": get_only},
+                     {"prefix": "/tx/", "headers": get_only},
+                     {"path": "/balance", "headers": get_only})]
 # The party's OWN auditor (S12/S13 transport A): other parties reach it only through this gateway. The auditor's code route names:
 # /keys (GET), /approve (POST; a leg approval can take a while), and on BI /records, /records/{bundle} (BI lens). Every auditor error is
 # HTTP 500 by design (driver/src/auditor.rs); OPA decides who may call what.
