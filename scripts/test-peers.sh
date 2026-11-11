@@ -32,17 +32,21 @@ for p in bi bank-a bank-b; do
   out=$("$R" "$p" $H $CIDR 2>&1) || { fail "$p: render failed: $out"; continue; }
   grep -q '@[A-Z_]*@' <<<"$out" && fail "$p: unreplaced placeholder in output"
   python3 -I scripts/check-peers.py "$p" $H $CIDR <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "peers" <<<"$out" || fails=$((fails + 1))
 done
 for p in bi bank-a bank-b; do # the CLB health-check source is opt-in; Alibaba CLB probes and forwards from 100.64.0.0/10
   out=$("$R" --clb-health-cidr 100.64.0.0/10 "$p" $H $CIDR 2>&1) || { fail "$p: render with --clb-health-cidr failed: $out"; continue; }
   python3 -I scripts/check-peers.py "$p" $H $CIDR clb <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "peers" <<<"$out" || fails=$((fails + 1))
   [[ $("$R" "$p" $H $CIDR | grep -c '100\.64\.') -eq 0 ]] && ok "$p: default render has no 100.64 element" || fail "$p: default render carries 100.64"
 done
 # S8: bank-c on cluster 2 (default and with the CLB element)
 out=$("$R" --cluster 2 bank-c $H $CIDR 2>&1) || fail "bank-c --cluster 2: render failed: $out"
 python3 -I scripts/check-peers.py bank-c $H $CIDR c2 <<<"$out" || fails=$((fails + 1))
+python3 -I scripts/check-netpol-form.py "peers" <<<"$out" || fails=$((fails + 1))
 grep -q 'alicloud' <<<"$out" && fail "bank-c --cluster 2 still names a cluster-1 StorageClass (alicloud-*)"
 out=$("$R" --clb-health-cidr 100.64.0.0/10 --cluster 2 bank-c $H $CIDR 2>&1) || fail "bank-c --cluster 2 --clb-health-cidr: render failed: $out"
 python3 -I scripts/check-peers.py bank-c $H $CIDR clb c2 <<<"$out" || fails=$((fails + 1))
+python3 -I scripts/check-netpol-form.py "peers" <<<"$out" || fails=$((fails + 1))
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"

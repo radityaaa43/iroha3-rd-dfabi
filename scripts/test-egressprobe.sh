@@ -14,6 +14,7 @@ refuse "a tag instead of a digest" "digest" bi "debian:latest"
 for p in bi bank-a bank-b bank-c; do
   out=$("$R" "$p" "$D" 2>&1) || { fail "$p: render failed: $out"; continue; }
   python3 -I scripts/check-egressprobe.py "$p" "$D" <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "egressprobe" <<<"$out" || fails=$((fails + 1))
 done
 a=$("$R" bi "$D"); b=$("$R" bi "$D")
 [[ -n $a && $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs or is empty"
