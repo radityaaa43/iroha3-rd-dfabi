@@ -8,6 +8,7 @@
 # bank-c is cluster 2 and needs --cluster 2 (S8): no PriorityClass (it is cluster-scoped and not ours on cluster 2), no cluster-1 node
 # exclusion, StorageClass `fabricx-essd` (WaitForFirstConsumer, reclaim Retain; a class of the fabricx team that we only USE: read its
 # provisioner, volumeBindingMode and reclaimPolicy before the apply, never create or edit it). `alicloud-essd` on cluster 2 is Immediate.
+# bank-c also gets memory request 512Mi (cluster 2 is full; "GO resize" 2026-11-12): CPU request 250m and the limits 2000m/3Gi stay.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 clb=""
@@ -42,4 +43,6 @@ sed -e "s|@PARTY@|$party|g" -e "s|@GENESIS_HASH8@|$hash8|g" -e "s|@BANKC_LB_CIDR
     /^        nodeAffinity:$/ { skip = 1; next }
     skip && /^        podAntiAffinity:$/ { skip = 0 }
     skip { next }
+    # bank-c on cluster 2 (full): memory REQUEST 1Gi -> 512Mi so it can be scheduled; CPU request and all limits unchanged
+    /^              memory: 1Gi$/ { print "              memory: 512Mi"; next }
     { gsub(/alicloud-essd-wffc/, "fabricx-essd"); print }'
