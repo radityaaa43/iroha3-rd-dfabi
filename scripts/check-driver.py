@@ -7,6 +7,7 @@ import tomllib
 import yaml
 
 party, digest, h8, chain = sys.argv[1:5]
+tlsmode = len(sys.argv) > 5 and sys.argv[5] == "tls"  # rendered with --audit-tls (iroha3 S13 transport A)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -20,8 +21,9 @@ def need(kind, name):
     return d
 
 
-if len(docs) != 4:
-    bad.append(f"want exactly 4 objects (ConfigMap, Deployment, Service, NetworkPolicy), got {len(docs)}: {sorted(by)}")
+want_n = 5 if tlsmode else 4
+if len(docs) != want_n:
+    bad.append(f"want exactly {want_n} objects (ConfigMap driver-config, {'ConfigMap gateway-server-cas, ' if tlsmode else ''}Deployment, Service, NetworkPolicy), got {len(docs)}: {sorted(by)}")
 for (k, n), d in by.items():
     if d["metadata"].get("namespace") != ns:
         bad.append(f"{k} {n} is in namespace {d['metadata'].get('namespace')}, want {ns}")
@@ -45,6 +47,14 @@ if cm:
                 bad.append(f"rd-dfabi.toml {k} = {cfg.get(k)!r}, want {v!r}")
         if cfg.get("assets") != {"rd": "7onbjg2gRXveoAAUFsohCZyGW98t", "dfabi": "4mBWK1JCwQdHLDPpuVKc56eLsXka"}:
             bad.append(f"assets must be the Base58 definition ids: {cfg.get('assets')}")
+        urls = [f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443" for p in ("bi", "bank-a", "bank-b")]
+        if tlsmode:
+            if cfg.get("audit") != {"min_approvals": 2, "auditor_urls": urls}:
+                bad.append(f"[audit] must be 2-of-3 through the three gateways {urls}: {cfg.get('audit')}")
+            if cfg.get("tls") != {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}:
+                bad.append(f"[tls]: {cfg.get('tls')}")
+        elif "audit" in cfg or "tls" in cfg:
+            bad.append("[audit]/[tls] only with --audit-tls")
         if cfg.get("party") != party:  # lead condition (node-build#21): no bank may rely on the default `bi`
             bad.append(f"rd-dfabi.toml party = {cfg.get('party')!r}, want {party!r} (set explicitly per party)")
         if cfg.get("lanes") != {"rd": 1, "dfabi": 2}:
@@ -93,9 +103,24 @@ if dep:
         if not good:
             bad.append(f"Deployment driver: {name}")
     vols = {v["name"]: v for v in pod["volumes"]}
-    secret_vols = [v for v in pod["volumes"] if "secret" in v]
-    if len(secret_vols) != 1 or secret_vols[0]["secret"]["secretName"] != f"{party}-keys":
-        bad.append(f"the only Secret volume must be {party}-keys: {secret_vols}")
+    all_secret_vols = [v for v in pod["volumes"] if "secret" in v]
+    secret_vols = [v for v in all_secret_vols if v["secret"]["secretName"] == f"{party}-keys"]
+    others = [v for v in all_secret_vols if v["secret"]["secretName"] != f"{party}-keys"]
+    if tlsmode:
+        want_other = [{"name": "client-cert", "secret": {"secretName": "iroha3-client-cert", "defaultMode": 0o400,
+                                                          "items": [{"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"}]}}]
+        if others != want_other:
+            bad.append(f"the only extra Secret volume must be iroha3-client-cert (tls.crt, tls.key, 0400): {others}")
+        cm_mounts = {m["mountPath"]: m for m in c["volumeMounts"]}
+        for mp in ("/tls/client", "/tls/cas"):
+            if mp not in cm_mounts or cm_mounts[mp].get("readOnly") is not True:
+                bad.append(f"mount {mp} must be read-only")
+        if vols.get("server-cas", {}).get("configMap", {}).get("name") != "gateway-server-cas":
+            bad.append("server-cas volume must be ConfigMap gateway-server-cas")
+    elif others:
+        bad.append(f"the only Secret volume must be {party}-keys: {all_secret_vols}")
+    if len(secret_vols) != 1:
+        bad.append(f"the Secret volume {party}-keys must be present exactly once: {secret_vols}")
     else:
         sv = secret_vols[0]["secret"]
         if sorted(i["key"] for i in sv.get("items", [])) != sorted([f"{party}.seed", f"{party}.note", "client.toml"]) or sv.get("defaultMode") != 0o400:
@@ -128,6 +153,14 @@ if np:
             and ing[0]["from"] == [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}]):
         bad.append(f"driver-ingress must admit only the gateway pods of the own namespace on TCP 8091: {ing}")
 
+cas = by.get(("ConfigMap", "gateway-server-cas"))
+if tlsmode:
+    if cas is None:
+        bad.append("missing ConfigMap gateway-server-cas")
+    elif sorted(cas["data"]) != sorted(f"{p}-server-ca.pem" for p in ("bi", "bank-a", "bank-b", "bank-c")) or any("PRIVATE KEY" in v or "BEGIN CERTIFICATE" not in v for v in cas["data"].values()):
+        bad.append("gateway-server-cas must hold exactly the 4 public <party>-server-ca.pem certificates")
+elif cas is not None:
+    bad.append("gateway-server-cas only with --audit-tls")
 for b in bad:
     print(f"FAIL: {party}: {b}", file=sys.stderr)
 print(f"{'FAIL' if bad else 'ok:  '} {party}: {len(docs)} objects")
