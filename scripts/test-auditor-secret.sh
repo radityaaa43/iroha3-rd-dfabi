@@ -14,6 +14,8 @@ echo "kubectl $*" >> "$STUB_LOG"
 if [[ $1 == create ]]; then
   for a in "$@"; do case $a in --from-file=*) f=${a#--from-file=}; echo "FILE ${f%%=*} $(wc -c < "${f#*=}")" >> "$STUB_LOG" ;; esac; done
   echo "kind: Secret"
+elif [[ $1 == apply ]]; then
+  cat > /dev/null # like the real kubectl: read the manifest from stdin
 fi
 STUB
 chmod +x "$T/bin/kubectl"
