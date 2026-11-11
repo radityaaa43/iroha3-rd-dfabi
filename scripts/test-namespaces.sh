@@ -32,6 +32,11 @@ out=$("$R" --cluster 2 bank-c 2>&1) || fail "bank-c: render failed: $out"
 grep -q '@' <<<"$out" && fail "bank-c: unreplaced placeholder in output"
 grep -q 'PriorityClass' <<<"$out" && fail "bank-c: output contains a PriorityClass (none on cluster 2)"
 python3 -I scripts/check-ns.py bank-c <<<"$out" || fails=$((fails + 1))
+out=$("$R" --cluster 2 --ns-only bank-c 2>&1) || fail "bank-c: --ns-only render failed: $out"
+python3 -I scripts/check-ns.py bank-c ns-only <<<"$out" || fails=$((fails + 1))
+out=$("$R" --ns-only bi 2>&1) || fail "bi: --ns-only render failed: $out"
+python3 -I scripts/check-ns.py bi ns-only <<<"$out" || fails=$((fails + 1))
+refuse "--ns-only priorityclass" "PriorityClass" --ns-only priorityclass
 pc=$("$R" priorityclass 2>&1) || fail "priorityclass render failed: $pc"
 python3 -I scripts/check-ns.py priorityclass <<<"$pc" || fails=$((fails + 1))
 

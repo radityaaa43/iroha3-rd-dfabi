@@ -5,6 +5,7 @@ import sys
 import yaml
 
 what = sys.argv[1]
+nsonly = len(sys.argv) > 2 and sys.argv[2] == "ns-only"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 bad = []
 
@@ -27,11 +28,22 @@ else:
         lab = n["metadata"].get("labels", {})
         if lab.get("app.kubernetes.io/part-of") != "rd-iroha3" or lab.get("rd-iroha3/party") != what:
             bad.append(f"namespace labels wrong: {lab}")
+        # cluster 2 (bank-c) carries `cluster: "2"` (fabricx parity); the live cluster-1 namespaces have no such label
+        want_cluster = "2" if what == "bank-c" else None
+        if lab.get("cluster") != want_cluster:
+            bad.append(f"namespace label cluster is {lab.get('cluster')!r}, want {want_cluster!r}")
     np_ = need("NetworkPolicy", "default-deny-ingress")
     if np_:
         s = np_["spec"]
         if s.get("podSelector") != {} or s.get("policyTypes") != ["Ingress"] or s.get("ingress"):
             bad.append(f"default-deny-ingress needs an empty podSelector, policyTypes [Ingress], no rules: {s}")
+    if nsonly:
+        if len(docs) != 1 or docs[0]["kind"] != "Namespace":
+            bad.append(f"--ns-only must emit exactly the Namespace doc, got {[d['kind'] for d in docs]}")
+        for b in bad:
+            print(f"FAIL: {what}: {b}", file=sys.stderr)
+        print(f"{'FAIL' if bad else 'ok:  '} {what} --ns-only: {len(docs)} object")
+        sys.exit(1 if bad else 0)
     need("ServiceAccount", "party-admin")
     role = need("Role", "party-admin")
     if role:
