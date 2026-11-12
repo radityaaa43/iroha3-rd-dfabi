@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check rendered S14 gateway manifests on stdin. Usage: check-gateway.py <party> <cluster 1|2> <envoy-image> <opa-image>"""
 import json
+import os
 import sys
 
 import yaml
@@ -20,7 +21,7 @@ def need(kind, name):
     return d
 
 
-want = {("ConfigMap", "gateway-envoy"), ("ConfigMap", "gateway-opa"), ("Deployment", "gateway"), ("Service", "gateway"),
+want = {("ConfigMap", "gateway-envoy"), ("ConfigMap", "gateway-opa"), ("ConfigMap", "gateway-policy"), ("Deployment", "gateway"), ("Service", "gateway"),
         ("NetworkPolicy", "gateway-ingress"), ("NetworkPolicy", "gateway-egress")}
 want |= {("Service", "gateway-ext")} if cluster == "1" else set()
 want |= {("Service", "gateway-lb")} if (cluster == "2" or lbmode) else set()
@@ -131,14 +132,30 @@ if cm:
         opa = yaml.safe_load(text)
         if "PRIVATE KEY" in text:
             bad.append("opa.yaml holds a private key")
-        if opa["services"] != {"bundle-server": {"url": f"http://bundle-server.rd-zeto-{party}.svc.cluster.local"}}:
-            bad.append(f"opa: services must be the same party's bundle-server only, got {opa['services']}")
-        if opa["plugins"]["envoy_ext_authz_grpc"]["addr"] != "127.0.0.1:9191":
-            bad.append(f"opa: ext_authz addr {opa['plugins']['envoy_ext_authz_grpc']['addr']}")
-        if not opa.get("keys"):
-            bad.append("opa: public keys block missing")
-        if opa.get("decision_logs") != {"console": True} or opa.get("status") != {"console": True}:
-            bad.append("opa: decision_logs and status must be console only")
+        # iroha3's OWN policy (user 2026-11-13): no bundle service, no bundle, no signing key; the files come from ConfigMap gateway-policy.
+        want_opa = {"plugins": {"envoy_ext_authz_grpc": {"addr": "127.0.0.1:9191", "path": "iroha3/allow", "dry-run": False}},
+                    "decision_logs": {"console": True}}
+        if opa != want_opa:
+            bad.append(f"opa.yaml must be exactly {want_opa} (no services, bundles or keys), got {opa}")
+
+# The policy files are the reviewed ones in deploy/gateway/policy, byte for byte (the gateway's OPA loads them as given).
+POLICY = ("iroha3.rego", "authz.rego", "log.rego", "data.json")
+pdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "deploy", "gateway", "policy")
+pc = need("ConfigMap", "gateway-policy")
+if pc:
+    if set(pc["data"]) != set(POLICY):
+        bad.append(f"gateway-policy keys: {sorted(pc['data'])}, want {sorted(POLICY)}")
+    else:
+        for f in POLICY:
+            if pc["data"][f] != open(os.path.join(pdir, f)).read():
+                bad.append(f"gateway-policy {f} differs from deploy/gateway/policy/{f}")
+        ca = json.loads(pc["data"]["data.json"])["iroha3_config"]["iroha3_ca"]
+        if {k: sorted(v) for k, v in ca.items()} != {k: ["bank-a", "bank-b", "bank-c", "bi"] for k in ("lensa", "role")}:
+            bad.append("gateway-policy data.json: iroha3_ca must hold exactly lensa and role CAs of bi, bank-a, bank-b, bank-c")
+        if any("PRIVATE" in pem or not pem.startswith("-----BEGIN CERTIFICATE-----") for v in ca.values() for pem in v.values()):
+            bad.append("gateway-policy data.json: public CA certificates only")
+        if "package iroha3\n" not in pc["data"]["iroha3.rego"]:
+            bad.append("gateway-policy iroha3.rego must be package iroha3 (decision path iroha3/allow)")
 
 dep = need("Deployment", "gateway")
 if dep:
@@ -179,11 +196,17 @@ if dep:
         if ctrs["envoy"]["ports"][0]["containerPort"] != 8443:
             bad.append("gateway envoy: containerPort 8443")
         a = ctrs["opa"]["args"]
-        for need_arg in ("run", "--server", "--addr=localhost:8181", "--config-file=/config/opa.yaml", f"--set=labels.gateway=gateway-{party}",
-                         "--set=bundles.bi.resource=bi/latest.tar.gz", "--set=bundles.bank.resource=bank/latest.tar.gz", f"--set=bundles.bank.signing.keyid={party}"):
-            if need_arg not in a:
-                bad.append(f"gateway opa: arg {need_arg} missing")
+        want_args = ["run", "--server", "--addr=localhost:8181", "--diagnostic-addr=0.0.0.0:8282", "--authorization=basic",
+                     "--config-file=/config/opa.yaml", f"--set=labels.gateway=gateway-{party}"] + [f"/policy/{f}" for f in POLICY]
+        if a != want_args:
+            bad.append(f"gateway opa: args must be exactly {want_args} (explicit files: the ConfigMap dir also holds ..data links), got {a}")
+        if ctrs["opa"]["readinessProbe"]["httpGet"]["path"] != "/health?plugins":
+            bad.append("gateway opa: readiness /health?plugins (no bundles to wait for)")
+        if {"name": "opa-policy", "mountPath": "/policy", "readOnly": True} not in ctrs["opa"]["volumeMounts"]:
+            bad.append("gateway opa: ConfigMap gateway-policy mounted read-only at /policy")
     vols = {v["name"]: v for v in pod["volumes"]}
+    if vols.get("opa-policy") != {"name": "opa-policy", "configMap": {"name": "gateway-policy"}}:
+        bad.append("gateway: volume opa-policy must be ConfigMap gateway-policy")
     secrets = {v["secret"]["secretName"] for v in vols.values() if "secret" in v}
     if secrets != {"gateway-server", "gateway-client-ca"}:
         bad.append(f"gateway: Secret volumes {sorted(secrets)}, want gateway-server and gateway-client-ca")
@@ -222,14 +245,11 @@ if ge:
         {"to": [peer], "ports": [{"protocol": "TCP", "port": 8080}]},
         {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}}], "ports": [{"protocol": "TCP", "port": 8091}]},
         {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}}], "ports": [{"protocol": "TCP", "port": 8090}]},
-        # OPA pulls its signed bundles from the SAME party's bundle-server pods (POD port 8080; the Service port 80 is DNAT-ed to it; never the 8081 sink)
-        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-zeto-{party}"}},
-                 "podSelector": {"matchLabels": {"app": "bundle-server"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
-    ]
+    ]  # no bundle-server: the policy is local (ConfigMap gateway-policy), nothing leaves for rd-zeto-<party>
     if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "gateway"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
         bad.append(f"NetworkPolicy gateway-egress: selector role=gateway, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
     if sp.get("egress") != want_eg:
-        bad.append(f"NetworkPolicy gateway-egress: DNS, own Torii 8080, own driver 8091, own auditor 8090, own bundle-server 8080 only: {json.dumps(sp.get('egress'))}")
+        bad.append(f"NetworkPolicy gateway-egress: DNS, own Torii 8080, own driver 8091, own auditor 8090 only: {json.dumps(sp.get('egress'))}")
     if "ipBlock" in json.dumps(sp) or "8081" in json.dumps(sp):
         bad.append("NetworkPolicy gateway-egress: no ipBlock, never the 8081 sink")
 

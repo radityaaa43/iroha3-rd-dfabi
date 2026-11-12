@@ -1,11 +1,12 @@
 """Render the S14 gateway manifests (see render.sh). Output: YAML stream of JSON documents, deterministic."""
 import json
+import os
 import sys
 
 import yaml
 
-party, cluster, envoy_image, opa_image, opa_config, acl = sys.argv[1:7]
-ranges = sys.argv[7:]
+party, cluster, envoy_image, opa_image, acl = sys.argv[1:6]
+ranges = sys.argv[6:]
 ns = f"rd-iroha3-{party}"
 
 
@@ -14,23 +15,14 @@ def refuse(message):
     sys.exit(2)
 
 
-# --- the party's OPA config: public bundle-signing keys and the ext_authz plugin, kept as given
-try:
-    base = yaml.safe_load(open(opa_config)) or {}
-except yaml.YAMLError as e:
-    refuse(f"--opa-config is not YAML: {e}")
-if not isinstance(base, dict) or not base.get("keys"):
-    refuse("--opa-config needs a `keys:` block with the PUBLIC bundle-signing keys")
-if party not in base["keys"]:
-    refuse(f"--opa-config `keys:` has no key named {party} (the bank bundle is verified with signing keyid {party})")
-if base.get("plugins", {}).get("envoy_ext_authz_grpc", {}).get("addr") != "127.0.0.1:9191":
-    refuse("--opa-config needs plugins.envoy_ext_authz_grpc with addr 127.0.0.1:9191 (the address the envoy opa cluster dials)")
-# Read side only, as the Fabric-X gateway (rd-fabric-x#37): bundles come from the SAME party's bundle-server in its own cluster;
-# URL names the Service port 80 (no :8080: that is the pod port; 8081 is the sink); no sink, no token, decision logs and status on the console.
-opa = {**base,
-       "services": {"bundle-server": {"url": f"http://bundle-server.rd-zeto-{party}.svc.cluster.local"}},
-       "decision_logs": {"console": True},
-       "status": {"console": True}}
+# --- the gateway's OWN OPA (user 2026-11-13: iroha3 policy separated from the besu combined bundle). The policy, its tests and
+# the public CA data live in deploy/gateway/policy; OPA loads those files from ConfigMap gateway-policy: no bundle service, no
+# bundle-signing key, nothing pulled from rd-zeto-<party>. Decision path iroha3/allow; decision logs on the console.
+POLICY = ("iroha3.rego", "authz.rego", "log.rego", "data.json")
+pdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "policy")
+policy = {f: open(os.path.join(pdir, f)).read() for f in POLICY}
+opa = {"plugins": {"envoy_ext_authz_grpc": {"addr": "127.0.0.1:9191", "path": "iroha3/allow", "dry-run": False}},
+       "decision_logs": {"console": True}}
 
 # --- envoy: mTLS listener, XFCC to OPA, forward every path unchanged to the party's Torii or driver
 AUTHZ = "envoy.filters.http.ext_authz"
@@ -126,6 +118,7 @@ docs = [
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("gateway-envoy"), "data": {"envoy.yaml": json.dumps(envoy, indent=2) + "\n"}},
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("gateway-opa"),
      "data": {"opa.yaml": yaml.safe_dump(opa, sort_keys=True, default_flow_style=False)}},
+    {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("gateway-policy"), "data": policy},
     {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": meta("gateway", {"labels": role}),
      "spec": {
          "replicas": 1,
@@ -155,18 +148,20 @@ docs = [
                                    {"name": "client-ca", "mountPath": "/client-ca", "readOnly": True}, tmp_mount]},
                  {"name": "opa", "image": opa_image, "imagePullPolicy": "IfNotPresent",
                   "args": ["run", "--server", "--addr=localhost:8181", "--diagnostic-addr=0.0.0.0:8282", "--authorization=basic",
-                           "--config-file=/config/opa.yaml", f"--set=labels.gateway=gateway-{party}",
-                           "--set=bundles.bi.resource=bi/latest.tar.gz", "--set=bundles.bank.resource=bank/latest.tar.gz",
-                           f"--set=bundles.bank.signing.keyid={party}"],
+                           "--config-file=/config/opa.yaml", f"--set=labels.gateway=gateway-{party}"]
+                          # explicit files: the ConfigMap mount also holds ..data / ..<timestamp> links that a directory load would read twice
+                          + [f"/policy/{f}" for f in POLICY],
                   "resources": {"requests": {"cpu": "20m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
                   "securityContext": ctr_sec,
-                  "readinessProbe": {"httpGet": {"path": "/health?plugins&bundles", "port": 8282}, "periodSeconds": 5},
+                  "readinessProbe": {"httpGet": {"path": "/health?plugins", "port": 8282}, "periodSeconds": 5},
                   "livenessProbe": {"httpGet": {"path": "/health", "port": 8282}, "periodSeconds": 20},
-                  "volumeMounts": [{"name": "opa-config", "mountPath": "/config", "readOnly": True}, tmp_mount]},
+                  "volumeMounts": [{"name": "opa-config", "mountPath": "/config", "readOnly": True},
+                                   {"name": "opa-policy", "mountPath": "/policy", "readOnly": True}, tmp_mount]},
              ],
              "volumes": [
                  {"name": "envoy-config", "configMap": {"name": "gateway-envoy"}},
                  {"name": "opa-config", "configMap": {"name": "gateway-opa"}},
+                 {"name": "opa-policy", "configMap": {"name": "gateway-policy"}},
                  {"name": "server-cert", "secret": {"secretName": "gateway-server", "defaultMode": 0o440}},
                  {"name": "client-ca", "secret": {"secretName": "gateway-client-ca"}},
                  {"name": "tmp", "emptyDir": {}},
@@ -192,8 +187,8 @@ if cluster == "2" or acl:
 docs.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("gateway-ingress"),
              "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "gateway"}}, "policyTypes": ["Ingress"],
                       "ingress": [{"ports": [{"protocol": "TCP", "port": 8443}]}]}})
-# R17 (key-holding pod: tls.key): the gateway's own narrow Egress policy, applied together with it. DNS, the own Torii, driver, auditor, and the
-# SAME party's bundle-server (POD port 8080; Service port 80 is DNAT-ed to it; never the 8081 sink). No ipBlock: nothing else leaves the pod.
+# R17 (key-holding pod: tls.key): the gateway's own narrow Egress policy, applied together with it. DNS, the own Torii, driver and auditor.
+# No bundle-server (the policy is local), no ipBlock: nothing else leaves the pod.
 docs.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("gateway-egress"),
              "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}, "policyTypes": ["Egress"],
                       "egress": [
@@ -203,7 +198,5 @@ docs.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "met
                           {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
                           {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}}], "ports": [{"protocol": "TCP", "port": 8091}]},
                           {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}}], "ports": [{"protocol": "TCP", "port": 8090}]},
-                          {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-zeto-{party}"}},
-                                   "podSelector": {"matchLabels": {"app": "bundle-server"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
                       ]}})
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
