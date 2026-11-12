@@ -22,7 +22,7 @@ def need(kind, name):
     return d
 
 
-want_n = 6 if tlsmode else 4
+want_n = 6 if tlsmode else 5
 if len(docs) != want_n:
     bad.append(f"want exactly {want_n} objects (ConfigMap driver-config, {'ConfigMap gateway-server-cas, ' if tlsmode else ''}Deployment, Service, NetworkPolicy{' x2 (ingress + egress)' if tlsmode else ''}), got {len(docs)}: {sorted(by)}")
 for (k, n), d in by.items():
@@ -154,34 +154,30 @@ if np:
             and ing[0]["from"] == [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}]):
         bad.append(f"driver-ingress must admit only the gateway pods of the own namespace on TCP 8091: {ing}")
 
-# R17 precondition (lead): the key-holding driver gets its own narrow Egress policy WITH the S14 gateway path (--audit-tls): DNS, the own party's Torii, the
-# gateways on 8443 (same-cluster namespaces by selector; gateways of the other cluster only by explicit /32 --remote-gw-cidr). Without --audit-tls: none.
+# R17 end step: the key-holding driver gets ONE narrow Egress policy `driver-egress`, ALWAYS (the live D2 shape too). Destinations: the OWN peer's Torii on 8080 only (every live
+# server route uses client.toml = own Torii; the [torii] table's other parties are read only by the CLI APS paths aps.rs:625/735, not by the driver pod), DNS by selector, and WITH --audit-tls the gateways on 8443 (same-cluster namespaces by selector; the other cluster's gateways only as explicit /32 --remote-gw-cidr).
 eg = by.get(("NetworkPolicy", "driver-egress"))
-if not tlsmode:
-    if eg is not None:
-        bad.append("driver-egress must only be rendered with --audit-tls")
+if eg is None:
+    bad.append("missing NetworkPolicy driver-egress")
 else:
-    if eg is None:
-        bad.append("missing NetworkPolicy driver-egress")
-    else:
-        sp = eg["spec"]
-        c1 = ("bi", "bank-a", "bank-b")
-        gw_ns = c1 if party in c1 else ("bank-c",)
-        gw = lambda q: {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
-                        "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
-        want_eg = [
-            {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
-                     "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
-             "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-            {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
-            {"to": [gw(q) for q in gw_ns] + [{"ipBlock": {"cidr": c}} for c in remote], "ports": [{"protocol": "TCP", "port": 8443}]},
-        ]
-        if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "driver"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
-            bad.append(f"driver-egress: selector role=driver, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
-        if sp.get("egress") != want_eg:
-            bad.append(f"driver-egress rules differ from DNS + own Torii 8080 + gateways 8443 (+ remote /32): {json.dumps(sp.get('egress'))}")
-        if any(not c.endswith("/32") for c in remote):
-            bad.append("remote gateway CIDRs must be /32")
+    sp = eg["spec"]
+    c1 = ("bi", "bank-a", "bank-b")
+    same = c1 if party in c1 else ("bank-c",)
+    nsel = lambda q, role: {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}}, "podSelector": {"matchLabels": {"rd-iroha3/role": role}}}
+    want_eg = [
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+         "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+        {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+    ]
+    if tlsmode:
+        want_eg.append({"to": [nsel(q, "gateway") for q in same] + [{"ipBlock": {"cidr": c}} for c in remote], "ports": [{"protocol": "TCP", "port": 8443}]})
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "driver"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"driver-egress: selector role=driver, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+    if sp.get("egress") != want_eg:
+        bad.append(f"driver-egress rules differ from the intended destinations: {json.dumps(sp.get('egress'))}")
+    if any(not c.endswith("/32") for c in remote):
+        bad.append("remote gateway CIDRs must be /32")
 
 cas = by.get(("ConfigMap", "gateway-server-cas"))
 if tlsmode:

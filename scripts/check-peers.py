@@ -7,6 +7,8 @@ import yaml
 party, h8, cidr = sys.argv[1:4]
 flags = sys.argv[4:]
 clb = "clb" in flags  # --clb-health-cidr 100.64.0.0/10 requested
+egress_cidrs = [f.split(":", 1)[1].split(",") for f in flags if f.startswith("egress:")]
+egress_cidrs = egress_cidrs[0] if egress_cidrs else []  # --p2p-egress-cidr values (the OTHER cluster's LB /32 addresses)
 c2 = "c2" in flags  # --cluster 2 (bank-c): no PriorityClass, no cluster-1 node exclusion, StorageClass fabricx-essd (WaitForFirstConsumer)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
@@ -107,9 +109,34 @@ if boot:
 for (k, name), d in by.items():
     if d["metadata"].get("namespace") != ns:
         bad.append(f"{k} {name} is in namespace {d['metadata'].get('namespace')}, want {ns}")
-if len(docs) != 5:
-    bad.append(f"want exactly 5 objects (StatefulSet, Service, 3 NetworkPolicies), got {len(docs)}")
+want_n = 6 if egress_cidrs else 5
+if len(docs) != want_n:
+    bad.append(f"want exactly {want_n} objects (StatefulSet, Service, 3 NetworkPolicies{' + peers-egress' if egress_cidrs else ''}), got {len(docs)}")
 for b in bad:
     print(f"FAIL: {party}: {b}", file=sys.stderr)
+# R17 end step: the LIVE peers get ONE narrow Egress policy (only with --p2p-egress-cidr). Ports/destinations from the peer config: P2P bind 1337 and Torii bind 8080
+# (network/check.sh:72-73), trusted_peers = same-cluster peers by cluster DNS, the other cluster by its external LB address (network/s5.py:351-353,360-361: trusted_peers + telemetry URLs of the
+# same-cluster peers only, port 8080; public_address :370), DNS by selector. NTS time sampling is peer-to-peer over the same sockets (iroha_config user.rs Nts), no external server.
+eg = by.get(("NetworkPolicy", "peers-egress"))
+if not egress_cidrs:
+    if eg is not None:
+        bad.append("peers-egress must only be rendered with --p2p-egress-cidr")
+elif eg is None:
+    bad.append("missing NetworkPolicy peers-egress")
+else:
+    sp = eg["spec"]
+    same_ns = ["rd-iroha3-bank-c"] if c2 else ["rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"]
+    to_ns = lambda: [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": n}}, "podSelector": {"matchLabels": {"rd-iroha3/role": "peer"}}} for n in same_ns]
+    want_eg = [
+        {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+         "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+        {"to": to_ns(), "ports": [{"protocol": "TCP", "port": 1337}]},
+        {"to": [{"ipBlock": {"cidr": c}} for c in egress_cidrs], "ports": [{"protocol": "TCP", "port": 1337}]},
+        {"to": to_ns(), "ports": [{"protocol": "TCP", "port": 8080}]},
+    ]
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "peer"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"peers-egress: selector role=peer, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+    if sp.get("egress") != want_eg:
+        bad.append(f"peers-egress rules differ from DNS + P2P 1337 (same-cluster ns + other-cluster /32) + Torii 8080 (same-cluster ns): {sp.get('egress')}")
 print(f"{'FAIL' if bad else 'ok:  '} {party}: {len(docs)} objects")
 sys.exit(1 if bad else 0)

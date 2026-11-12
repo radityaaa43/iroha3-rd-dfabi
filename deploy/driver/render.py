@@ -7,6 +7,7 @@ import tomllib
 party, digest, pub, network = sys.argv[1:5]
 audit_tls = len(sys.argv) > 5 and sys.argv[5] == "--audit-tls"
 remote_gw = sys.argv[6:] if audit_tls else []
+same_cluster = ("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",)
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
 read = lambda name: open(f"{pub}/{name}").read()
@@ -120,20 +121,20 @@ docs = [
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Ingress"],
               "ingress": [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}],
                            "ports": [{"protocol": "TCP", "port": 8091}]}]}},
-    # R17 (key-holding pod: the bank seed): its own narrow Egress policy, rendered with the S14 gateway path. DNS; the own party's Torii; the gateways on 8443
-    # (same-cluster namespaces by selector; the other cluster's gateways ONLY as the explicit /32 external LB addresses given by --remote-gw-cidr).
-    *([{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "driver-egress", "namespace": ns, "labels": labels},
-        "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Egress"],
-                 "egress": [
-                     {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
-                              "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
-                      "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-                     {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
-                     {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
-                              "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
-                             for q in (("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",))]
+    # R17 end step (key-holding pod: the bank seed): ONE narrow Egress policy `driver-egress`, ALWAYS rendered (live D2 shape too): cluster DNS; the OWN peer's Torii (:8080)
+    # only (every live server route uses client.toml = own Torii; the other parties' [torii] entries are read only by the CLI APS paths); and WITH --audit-tls the
+    # gateways on 8443 (same-cluster namespaces by selector; the other cluster's gateways ONLY as the explicit /32 external LB addresses of --remote-gw-cidr).
+    {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "driver-egress", "namespace": ns, "labels": labels},
+     "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Egress"],
+              "egress": [
+                  {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                           "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                   "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                  {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}],
+                   "ports": [{"protocol": "TCP", "port": 8080}]},
+              ] + ([{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
+                             "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}} for q in same_cluster]
                             + [{"ipBlock": {"cidr": c}} for c in remote_gw],
-                      "ports": [{"protocol": "TCP", "port": 8443}]},
-                 ]}}] if audit_tls else []),
+                     "ports": [{"protocol": "TCP", "port": 8443}]}] if audit_tls else [])}},
 ]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
