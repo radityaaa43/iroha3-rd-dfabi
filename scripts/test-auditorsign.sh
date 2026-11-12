@@ -73,21 +73,22 @@ if runjob "$T/ext2.csr"; then fail "the Job script signed a CSR with a requested
 # ---- OPTION C stages: keygen (key made IN the pod, written into the pre-created empty Secret through a Role limited to get/update/patch on resourceNames [auditor-client-cert]) and put (public cert) ----
 TI=docker.io/alpine/k8s@sha256:$(printf 'b%.0s' $(seq 1 64))
 API=(--apiserver 10.200.0.1/32:443 --apiserver 172.24.11.240/32:6443)
-refuse "keygen without --apiserver" "usage" keygen bi "$TI"
-refuse "keygen with a tag image" "digest" keygen bi docker.io/alpine/k8s:3.19 "${API[@]}"
-refuse "keygen with a bad --apiserver" "--apiserver" keygen bi "$TI" --apiserver 10.200.0.1/24:443
-refuse "keygen for bank-c" "usage" keygen bank-c "$TI" "${API[@]}"
+refuse "keygen without --apiserver" "usage" keygen bi "$TI" "$D"
+refuse "keygen with a tag driver image" "driver image" keygen bi "$TI" debian:latest "${API[@]}"
+refuse "keygen with a tag image" "digest" keygen bi docker.io/alpine/k8s:3.19 "$D" "${API[@]}"
+refuse "keygen with a bad --apiserver" "--apiserver" keygen bi "$TI" "$D" --apiserver 10.200.0.1/24:443
+refuse "keygen for bank-c" "usage" keygen bank-c "$TI" "$D" "${API[@]}"
 for p in bi bank-a bank-b; do
-  out=$("$R" keygen "$p" "$TI" "${API[@]}" 2>&1) || { fail "$p keygen render failed: $out"; continue; }
-  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" 10.200.0.1/32:443 172.24.11.240/32:6443 <<<"$out" || fails=$((fails + 1))
+  out=$("$R" keygen "$p" "$TI" "$D" "${API[@]}" 2>&1) || { fail "$p keygen render failed: $out"; continue; }
+  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" 10.200.0.1/32:443 172.24.11.240/32:6443 <<<"$out" || fails=$((fails + 1))
 done
-kg=$("$R" keygen bank-a "$TI" "${API[@]}")
+kg=$("$R" keygen bank-a "$TI" "$D" "${API[@]}")
 kmut() { # <label> <python on docs by (kind,name)>
   python3 -I -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
-exec(sys.argv[1]); print(yaml.safe_dump_all(docs))' "$2" <<<"$kg" | python3 -I scripts/check-auditorapi.py keygen bank-a "$TI" 10.200.0.1/32:443 172.24.11.240/32:6443 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the keygen checker"
+exec(sys.argv[1]); print(yaml.safe_dump_all(docs))' "$2" <<<"$kg" | python3 -I scripts/check-auditorapi.py keygen bank-a "$TI" "$D" 10.200.0.1/32:443 172.24.11.240/32:6443 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the keygen checker"
 }
 RL='by[("Role","auditor-client-api")]["rules"][0]'
 kmut "the Role also allows create" "$RL"'["verbs"].append("create")'
@@ -102,6 +103,11 @@ kmut "the keygen NetworkPolicy also allows DNS" 'by[("NetworkPolicy","auditor-cl
 kmut "the keygen NetworkPolicy opens 0.0.0.0/0" 'by[("NetworkPolicy","auditor-client-api-egress")]["spec"]["egress"][0]["to"].append({"ipBlock":{"cidr":"0.0.0.0/0"}})'
 kmut "the keygen pod without rd/egress-locked" 'by[("Job","auditor-client-keygen")]["spec"]["template"]["metadata"]["labels"].pop("rd/egress-locked")'
 kmut "the keygen pod mounting a Secret volume" 'v = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["volumes"]; v.append({"name":"s","secret":{"secretName":"iroha3-role-ca"}})'
+kmut "the tools-image script calling openssl" 'c = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["containers"][0]["command"]; c[2] += "\nopenssl version"'
+kmut "the openssl initContainer printing the key" 'c = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["initContainers"][0]["command"]; c[2] += "\ncat /work/tls.key"'
+kmut "the openssl initContainer with kubectl (key + API in one container)" 'c = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["initContainers"][0]["command"]; c[2] += "\nkubectl version"'
+kmut "the driver image by tag in the initContainer" 'by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["initContainers"][0]["image"] = "ghcr.io/radityaaa43/iroha3-rd-driver:latest"'
+kmut "the key hand-over volume on a disk (no Memory)" 'v = [x for x in by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["volumes"] if x["name"] == "work"][0]; v["emptyDir"].pop("medium")'
 kmut "the keygen script printing the key" 'c = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["containers"][0]["command"]; c[2] += "\ncat /tmp/tls.key"'
 kmut "the keygen script without the empty-Secret guard" 'c = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["containers"][0]["command"]; c[2] = c[2].replace("refusing to overwrite a key", "ok")'
 kmut "the keygen script putting the key into an argv (-p)" 'c = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["containers"][0]["command"]; c[2] += "\nkubectl patch secret auditor-client-cert -p x"'
@@ -109,11 +115,12 @@ kmut "the tools image by tag" 'by[("Job","auditor-client-keygen")]["spec"]["temp
 kmut "a rendered Secret object" 'docs.append({"apiVersion":"v1","kind":"Secret","metadata":{"name":"auditor-client-cert","namespace":"rd-iroha3-bank-a","labels":{"app.kubernetes.io/part-of":"rd-iroha3"}},"stringData":{"x":"y"}})'
 # FUNCTIONAL: run the rendered keygen script with a stub kubectl and the real openssl: the key goes ONLY into the patch file (base64, tls.key), stdout is ONLY the CSR, no key in stdout/stderr,
 # a non-empty Secret aborts before any key is made.
-mkjob() { # <stage-doc-json-source> <job name> <out script>
+mkjob() { # <stage docs> <out main script>   (the init script goes to <out>.init)
   python3 -I -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
-print([d for d in docs if d["kind"] == "Job"][0]["spec"]["template"]["spec"]["containers"][0]["command"][2])' <<<"$1" > "$2"
+sp = [d for d in docs if d["kind"] == "Job"][0]["spec"]["template"]["spec"]
+print(sp["containers"][0]["command"][2]); open(sys.argv[1] + ".init", "w").write(sp["initContainers"][0]["command"][2] + "\n")' "$2" <<<"$1" > "$2"
 }
 fbox() { # <script> <count> -> runs it in a temp tree with a stub kubectl; sets rc, stdout in $T/fout, stderr in $T/ferr, patch in $T/fbox/tmp/patch.json
   local sc=$1 cnt=$2; local b="$T/fbox"; find "$b" -mindepth 1 -delete 2>/dev/null; mkdir -p "$b/bin" "$b/tmp"
@@ -126,7 +133,9 @@ case "$*" in
 esac
 STUB
   chmod +x "$b/bin/kubectl"
-  sed "s#/tmp/#$b/tmp/#g" "$sc" > "$b/job.sh"
+  mkdir -p "$b/work"
+  sed "s#/work/#$b/work/#g" "$sc.init" > "$b/init.sh"; sed "s#/tmp/#$b/tmp/#g; s#/work/#$b/work/#g" "$sc" > "$b/job.sh"
+  sh "$b/init.sh" > "$T/finit" 2>&1 || { cp "$T/finit" "$T/ferr"; : > "$T/fout"; return 98; }
   STUB_COUNT=$cnt STUB_PATCH="$b/tmp/patch.json" STUB_SEEN="$b/seen.json" PATH="$b/bin:$PATH" sh "$b/job.sh" > "$T/fout" 2> "$T/ferr"; return $?
 }
 mkjob "$kg" "$T/kg.sh"
@@ -148,16 +157,16 @@ if fbox "$T/kg.sh" 1; then fail "the keygen script ran against a NON-empty Secre
 openssl x509 -req -in "$T/pp-bank-a.csr" -CA "$T/ca/ca.crt" -CAkey "$T/ca/ca.key" -CAcreateserial -CAserial "$T/ca/s.srl" -days 30 -extfile <(printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n') -out "$T/leaf-a.crt" 2>/dev/null
 openssl x509 -req -in "$T/pp-bi.csr" -CA "$T/ca/ca.crt" -CAkey "$T/ca/ca.key" -CAcreateserial -CAserial "$T/ca/s.srl" -days 30 -extfile <(printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n') -out "$T/leaf-bi.crt" 2>/dev/null
 openssl x509 -req -in "$T/pp-bank-a.csr" -CA "$T/ca/ca.crt" -CAkey "$T/ca/ca.key" -CAcreateserial -CAserial "$T/ca/s.srl" -days 30 -extfile <(printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth,clientAuth\n') -out "$T/leaf-both.crt" 2>/dev/null
-refuse "put with a certificate of ANOTHER party" "CN=bank-a-auditor" put bank-a "$TI" "$T/leaf-bi.crt"
-refuse "put with a serverAuth+clientAuth certificate" "clientAuth only" put bank-a "$TI" "$T/leaf-both.crt"
-refuse "put with a missing certificate" "not found" put bank-a "$TI" "$T/none.crt"
-refuse "put with a tag image" "digest" put bank-a docker.io/alpine/k8s:3.19 "$T/leaf-a.crt"
-pt=$("$R" put bank-a "$TI" "$T/leaf-a.crt" 2>&1) && python3 -I scripts/check-auditorapi.py put bank-a "$TI" "$T/leaf-a.crt" <<<"$pt" || fail "put render/check: $pt"
+refuse "put with a certificate of ANOTHER party" "CN=bank-a-auditor" put bank-a "$TI" "$D" "$T/leaf-bi.crt"
+refuse "put with a serverAuth+clientAuth certificate" "clientAuth only" put bank-a "$TI" "$D" "$T/leaf-both.crt"
+refuse "put with a missing certificate" "not found" put bank-a "$TI" "$D" "$T/none.crt"
+refuse "put with a tag image" "digest" put bank-a docker.io/alpine/k8s:3.19 "$D" "$T/leaf-a.crt"
+pt=$("$R" put bank-a "$TI" "$D" "$T/leaf-a.crt" 2>&1) && python3 -I scripts/check-auditorapi.py put bank-a "$TI" "$D" "$T/leaf-a.crt" <<<"$pt" || fail "put render/check: $pt"
 pmut() { python3 -I -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
-exec(sys.argv[1]); print(yaml.safe_dump_all(docs))' "$2" <<<"$pt" | python3 -I scripts/check-auditorapi.py put bank-a "$TI" "$T/leaf-a.crt" >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the put checker"; }
+exec(sys.argv[1]); print(yaml.safe_dump_all(docs))' "$2" <<<"$pt" | python3 -I scripts/check-auditorapi.py put bank-a "$TI" "$D" "$T/leaf-a.crt" >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the put checker"; }
 pmut "the put script also writing tls.key" 'c = by[("Job","auditor-client-put")]["spec"]["template"]["spec"]["containers"][0]["command"]; c[2] += "\nkubectl patch secret auditor-client-cert --patch-file /tmp/patch.json # tls.key"'
 pmut "the put Job mounting a Secret" 'by[("Job","auditor-client-put")]["spec"]["template"]["spec"]["volumes"].append({"name":"s","secret":{"secretName":"auditor-client-cert"}})'
 pmut "a key in the certificate ConfigMap" 'by[("ConfigMap","auditor-client-crt")]["data"]["tls.crt"] += "-----BEGIN PRIVATE KEY-----\nAA\n-----END PRIVATE KEY-----\n"'

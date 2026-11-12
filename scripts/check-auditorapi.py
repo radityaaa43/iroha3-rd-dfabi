@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Check the rendered auditor-client `keygen` / `put` stages (deploy/auditor-sign, analyst OPTION C) on stdin.
-Usage: check-auditorapi.py keygen <party> <tools-image> <ip/32:port>... | put <party> <tools-image> <cert-file>
+Usage: check-auditorapi.py keygen <party> <tools-image> <driver digest> <ip/32:port>... | put <party> <tools-image> <driver digest> <cert-file>
 The key is made in a pod of the auditor's own namespace and written by that pod into the pre-created EMPTY Secret auditor-client-cert through a Role limited to
-get/update/patch on resourceNames [auditor-client-cert] (create / list / watch / delete / other secrets: never). Only the CSR / the public cert is printed."""
+get/update/patch on resourceNames [auditor-client-cert] (create / list / watch / delete / other secrets: never). Only the CSR / the public cert is printed.
+The pod has TWO pinned images: the DRIVER image (initContainer `openssl`: the key + CSR are made there, into a MEMORY emptyDir) and the TOOLS image (container `run`: kubectl, no openssl)."""
 import json
 import sys
 
 import yaml
 
-stage, party, image = sys.argv[1:4]
-extra = sys.argv[4:]
+stage, party, image, drv = sys.argv[1:5]
+extra = sys.argv[5:]
 ns = f"rd-iroha3-{party}"
 SECRET = "auditor-client-cert"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
@@ -53,6 +54,8 @@ if stage == "keygen":
 job = by.get(("Job", jname))
 if job:
     s = job["spec"]; pod = s["template"]["spec"]; c = pod["containers"][0]
+    ics = pod.get("initContainers", [])
+    ic = ics[0] if len(ics) == 1 else {"image": "", "command": [], "securityContext": {}, "resources": {}, "volumeMounts": [], "name": ""}
     lab = s["template"]["metadata"]["labels"]
     checks = {
         "labels role=auditor-client-api + rd/egress-locked=true + party": lab.get("rd-iroha3/role") == "auditor-client-api" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party,
@@ -61,6 +64,10 @@ if job:
         "ttlSecondsAfterFinished set": isinstance(s.get("ttlSecondsAfterFinished"), int),
         "restartPolicy Never": pod["restartPolicy"] == "Never",
         "digest-pinned tools image, exactly the given one": c["image"] == image and "@sha256:" in c["image"],
+        "exactly one initContainer `openssl` = the digest-pinned driver image": len(ics) == 1 and ic["name"] == "openssl" and ic["image"] == f"ghcr.io/radityaaa43/iroha3-rd-driver@{drv}",
+        "initContainer hardening + resources": ic["securityContext"].get("allowPrivilegeEscalation") is False and ic["securityContext"].get("readOnlyRootFilesystem") is True
+        and ic["securityContext"].get("capabilities", {}).get("drop") == ["ALL"] and "requests" in ic["resources"] and "limits" in ic["resources"] and not ic.get("env"),
+        "imagePullSecrets ghcr-pull": pod.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "dedicated SA, token mounted only here": pod.get("serviceAccountName") == "auditor-client-api" and pod.get("automountServiceAccountToken") is True,
         "non-root + seccomp": pod["securityContext"].get("runAsNonRoot") is True and pod["securityContext"].get("seccompProfile") == {"type": "RuntimeDefault"},
         "container hardening": c["securityContext"].get("allowPrivilegeEscalation") is False and c["securityContext"].get("readOnlyRootFilesystem") is True
@@ -74,23 +81,36 @@ if job:
     vols = {v["name"]: v for v in pod["volumes"]}
     if "emptyDir" not in vols.get("tmp", {}) or vols["tmp"]["emptyDir"].get("medium") != "Memory":
         bad.append("volume tmp must be a Memory emptyDir (the key never touches a disk)")
-    allowed = {"tmp"} if stage == "keygen" else {"tmp", "crt"}
+    if "emptyDir" not in vols.get("work", {}) or vols["work"]["emptyDir"].get("medium") != "Memory":
+        bad.append("volume work (key + CSR hand-over between the two containers) must be a Memory emptyDir")
+    allowed = {"tmp", "work"} if stage == "keygen" else {"tmp", "work", "crt"}
     if set(vols) != allowed or any("secret" in v or "persistentVolumeClaim" in v or "hostPath" in v for v in vols.values()):
         bad.append(f"volumes must be exactly {sorted(allowed)}, none a Secret/PVC/hostPath: {sorted(vols)}")
     for m in c.get("volumeMounts", []):
         if m["name"] != "tmp" and m.get("readOnly") is not True:
-            bad.append(f"mount {m['name']} must be read-only")
+            bad.append(f"main container mount {m['name']} must be read-only")
     cmd = " ".join(c.get("command", []) + c.get("args", []))
+    icmd = " ".join(ic.get("command", []))
+    if "openssl" in cmd:
+        bad.append("the tools image has no openssl: the main container script must not call it (the initContainer does)")
+    for banned in ("kubectl", "curl", "wget", "cat /work", "echo", "base64"):
+        if banned in icmd:
+            bad.append(f"the openssl initContainer holds the key: it must not contain {banned!r}")
     if stage == "keygen":
-        need = ("{{if .data}}{{len .data}}{{else}}0{{end}}", "refusing to overwrite a key", "-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes", f"-subj '/CN={party}-auditor'",
-                "-keyout /tmp/tls.key", "--patch-file /tmp/patch.json", '{"data":{"tls.key":', "cat /tmp/auditor-client.csr", "{{range $k, $v := .data}}{{$k}} {{end}}")
+        need = ("{{if .data}}{{len .data}}{{else}}0{{end}}", "refusing to overwrite a key", "base64 -w0 /work/tls.key", "--patch-file /tmp/patch.json", '{"data":{"tls.key":',
+                "cat /work/auditor-client.csr", "{{range $k, $v := .data}}{{$k}} {{end}}")
+        for n in ("-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes", f"-subj '/CN={party}-auditor'", "-keyout /work/tls.key", "-out /work/auditor-client.csr", "umask 077"):
+            if n not in icmd:
+                bad.append(f"initContainer script lacks {n!r}")
     else:
-        need = (f"subject=CN={party}-auditor", '{"data":{"tls.crt":', "--patch-file /tmp/patch.json", "{{range $k, $v := .data}}{{$k}} {{end}}")
+        need = ('{"data":{"tls.crt":', "--patch-file /tmp/patch.json", "{{range $k, $v := .data}}{{$k}} {{end}}")
+        if f"subject=CN={party}-auditor" not in icmd:
+            bad.append("the put initContainer must check the certificate subject")
     for n in need:
         if n not in cmd:
             bad.append(f"script lacks {n!r}")
     # the key / any secret value is never printed, put into an argv, or exported: names only
-    for banned in ("cat /tmp/tls.key", "echo $", "echo \"", "-o yaml", "-o json", "-o jsonpath", "--output", " -p ", "--patch '", '--patch "', "base64 -d", "--decode", "curl", "wget"):
+    for banned in ("cat /tmp/tls.key", "cat /work/tls.key", "echo $", "echo \"", "-o yaml", "-o json", "-o jsonpath", "--output", " -p ", "--patch '", '--patch "', "base64 -d", "--decode", "curl", "wget"):
         if banned in cmd:
             bad.append(f"script must never contain {banned!r}")
     if stage == "keygen" and "tls.crt" in cmd:

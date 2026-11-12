@@ -2,18 +2,19 @@
 # Print the in-namespace objects that give an AUDITOR its mTLS client leaf (S13 dependency D2; analyst P1 condition 4 + ruling OPTION C on the key: the key is made INSIDE a pod
 # in the auditor's own namespace and never leaves it). Writes nothing, calls no cluster, renders NO Secret (the org creates the EMPTY Secret auditor-client-cert itself:
 # `kubectl create secret generic auditor-client-cert -n rd-iroha3-<party>`, no data).
-#   deploy/auditor-sign/render.sh keygen <bi|bank-a|bank-b> <tools-image@sha256:digest> --apiserver <ip>/32:<port> [--apiserver ...]
+#   deploy/auditor-sign/render.sh keygen <bi|bank-a|bank-b> <tools-image@sha256:digest> <sha256:driver digest> --apiserver <ip>/32:<port> [--apiserver ...]
 #       SA auditor-client-api + Role (get/update/patch on resourceNames [auditor-client-cert] ONLY) + RoleBinding + NetworkPolicy auditor-client-api-egress (egress = the given API server
-#       addresses ONLY) + Job auditor-client-keygen: refuses a non-empty Secret, makes the EC P-256 key + CSR (CN=<party>-auditor) in the pod, patches ONLY tls.key into the Secret, prints ONLY the CSR.
+#       addresses ONLY) + Job auditor-client-keygen: initContainer (the pinned DRIVER image: has openssl) makes the EC P-256 key + CSR (CN=<party>-auditor) into a MEMORY emptyDir; the main container (the pinned
+#       TOOLS image: kubectl, no openssl) refuses a non-empty Secret, patches ONLY tls.key into it and prints ONLY the CSR.
 #   deploy/auditor-sign/render.sh sign <bi|bank-a|bank-b> <sha256:<64 hex> driver image digest> <csr-file>
 #       ConfigMap auditor-client-csr + Job auditor-client-sign (the org's OWN role CA Secret iroha3-role-ca, read-only 0400; prints ONLY the public cert) + NetworkPolicy auditor-client-sign-egress (deny-all).
-#   deploy/auditor-sign/render.sh put <bi|bank-a|bank-b> <tools-image@sha256:digest> <cert-file>
+#   deploy/auditor-sign/render.sh put <bi|bank-a|bank-b> <tools-image@sha256:digest> <sha256:driver digest> <cert-file>
 #       ConfigMap auditor-client-crt (the PUBLIC cert) + Job auditor-client-put (same SA/Role/NetworkPolicy as keygen): patches ONLY tls.crt into the Secret. Then the org deletes Jobs, ConfigMaps,
 #       Role, RoleBinding, SA, NetworkPolicy ("RBAC left: []"). The Role, RoleBinding and SA are R13 objects (operator, time-boxed, one-line log); the rest is party-admin.
 # The CSR / certificate are checked HERE and again in the Job: valid signature, subject exactly CN=<party>-auditor, EC P-256, NO requested extensions; leaf = CA:FALSE, digitalSignature, clientAuth ONLY.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "usage: render.sh keygen|put <bi|bank-a|bank-b> <tools-image@sha256:<64 hex>> (--apiserver <ip>/32:<port> ... | <cert-file>) | render.sh sign <bi|bank-a|bank-b> <sha256:<64 hex>> <csr-file>" >&2; exit 2; }
+usage() { echo "usage: render.sh keygen|put <bi|bank-a|bank-b> <tools-image@sha256:<64 hex>> <sha256:<64 hex> driver digest> (--apiserver <ip>/32:<port> ... | <cert-file>) | render.sh sign <bi|bank-a|bank-b> <sha256:<64 hex>> <csr-file>" >&2; exit 2; }
 (( $# >= 4 )) || usage
 stage=$1 party=$2 image=$3; shift 3
 case $party in bi | bank-a | bank-b) ;; *) usage ;; esac
@@ -33,6 +34,9 @@ case $stage in
     exec python3 -I "$here/render.py" sign "$party" "$digest" "$csr" ;;
   keygen | put)
     [[ $image =~ @sha256:[0-9a-f]{64}$ ]] || { echo "render.sh: the tools image must be pinned by a digest (<repo>@sha256:<64 lowercase hex>), not a tag: got '$image'" >&2; exit 2; }
+    (( $# >= 1 )) || usage
+    drv=$1; shift
+    [[ $drv =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "render.sh: the driver image must be pinned by a digest (sha256:<64 lowercase hex>): got '$drv'" >&2; exit 2; }
     if [[ $stage == keygen ]]; then
       api=()
       while (( $# )); do
@@ -41,7 +45,7 @@ case $stage in
         api+=("$2"); shift 2
       done
       (( ${#api[@]} >= 1 )) || usage
-      exec python3 -I "$here/render.py" keygen "$party" "$image" "${api[@]}"
+      exec python3 -I "$here/render.py" keygen "$party" "$image" "$drv" "${api[@]}"
     fi
     (( $# == 1 )) || usage
     crt=$1
@@ -51,6 +55,6 @@ case $stage in
     [[ $(openssl x509 -in "$crt" -noout -subject -nameopt RFC2253 2>/dev/null) == "subject=CN=$party-auditor" ]] || { echo "render.sh: the certificate subject must be exactly CN=$party-auditor" >&2; exit 2; }
     ctxt=$(openssl x509 -in "$crt" -noout -text 2>/dev/null)
     [[ $ctxt == *"CA:FALSE"* && $ctxt == *"TLS Web Client Authentication"* && $ctxt != *"TLS Web Server Authentication"* ]] || { echo "render.sh: the certificate must be CA:FALSE with clientAuth only" >&2; exit 2; }
-    exec python3 -I "$here/render.py" put "$party" "$image" "$crt" ;;
+    exec python3 -I "$here/render.py" put "$party" "$image" "$drv" "$crt" ;;
   *) usage ;;
 esac

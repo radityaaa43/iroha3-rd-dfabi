@@ -52,34 +52,43 @@ if stage == "sign":
 # limited to get/update/patch on resourceNames [auditor-client-cert] (create cannot be limited by resourceNames: the org creates the empty Secret itself). Nothing but the CSR / public cert is printed.
 SECRET = "auditor-client-cert"
 api_pod_labels = {**labels, "rd-iroha3/role": "auditor-client-api", "rd/egress-locked": "true"}
-def api_job(name, image, script, mounts=(), volumes=()):
+def api_job(name, image, drv, init_script, script, mounts=(), volumes=()):
+    sec = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}}
+    res = {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "200m", "memory": "128Mi"}}
     return {"apiVersion": "batch/v1", "kind": "Job", "metadata": meta(name, api_pod_labels),
             "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 300, "ttlSecondsAfterFinished": 3600,
                      "template": {"metadata": {"labels": api_pod_labels}, "spec": {
                          "restartPolicy": "Never", "serviceAccountName": "auditor-client-api", "automountServiceAccountToken": True, "enableServiceLinks": False,
+                         "imagePullSecrets": [{"name": "ghcr-pull"}],
                          "securityContext": {"runAsNonRoot": True, "runAsUser": 1001, "runAsGroup": 1001, "fsGroup": 1001, "seccompProfile": {"type": "RuntimeDefault"}},
+                         # openssl lives in the (digest-pinned) DRIVER image (ca-certificates depends on it); kubectl lives in the TOOLS image: the two meet only in a MEMORY emptyDir
+                         "initContainers": [{"name": "openssl", "image": f"ghcr.io/radityaaa43/iroha3-rd-driver@{drv}", "imagePullPolicy": "IfNotPresent", "command": ["/bin/sh", "-c", init_script],
+                                             "resources": res, "securityContext": sec,
+                                             "volumeMounts": [{"name": "work", "mountPath": "/work"}, *mounts]}],
                          "containers": [{"name": "run", "image": image, "imagePullPolicy": "IfNotPresent", "command": ["/bin/sh", "-c", script],
-                                         "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "200m", "memory": "128Mi"}},
-                                         "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
-                                         "env": [{"name": "HOME", "value": "/tmp"}],
-                                         "volumeMounts": [*mounts, {"name": "tmp", "mountPath": "/tmp"}]}],
-                         "volumes": [*volumes, {"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}]}}}}
+                                         "resources": res, "securityContext": sec, "env": [{"name": "HOME", "value": "/tmp"}],
+                                         "volumeMounts": [{"name": "work", "mountPath": "/work", "readOnly": True}, *mounts, {"name": "tmp", "mountPath": "/tmp"}]}],
+                         "volumes": [*volumes, {"name": "work", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}, {"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}]}}}}
 NAMES = "kubectl get secret " + SECRET + " -o go-template='{{range $k, $v := .data}}{{$k}} {{end}}' >&2"  # key NAMES only, never a value
 if stage == "keygen":
-    image, api = sys.argv[3], sys.argv[4:]
+    image, drv, api = sys.argv[3], sys.argv[4], sys.argv[5:]
+    init_script = "\n".join([
+        "set -eu",
+        "umask 077",
+        f"openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout /work/tls.key -out /work/auditor-client.csr -subj '/CN={party}-auditor'",
+    ])
     script = "\n".join([
         "set -eu",
         "umask 077",
         # never overwrite: the Secret must be empty (a lost key is a new identity + a policy update, never silent)
         "n=$(kubectl get secret " + SECRET + " -o go-template='{{if .data}}{{len .data}}{{else}}0{{end}}')",
         "test \"$n\" = 0 || { echo 'Secret " + SECRET + " is not empty: refusing to overwrite a key' >&2; exit 1; }",
-        f"openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout /tmp/tls.key -out /tmp/auditor-client.csr -subj '/CN={party}-auditor'",
         # the key reaches the API server through a patch FILE in the memory emptyDir (printf is a builtin: no key in any argv)
-        "printf '{\"data\":{\"tls.key\":\"%s\"}}' \"$(base64 -w0 /tmp/tls.key)\" > /tmp/patch.json",
+        "printf '{\"data\":{\"tls.key\":\"%s\"}}' \"$(base64 -w0 /work/tls.key)\" > /tmp/patch.json",
         "kubectl patch secret " + SECRET + " --type=merge --patch-file /tmp/patch.json >/dev/null",
         NAMES,
         # ONLY the public CSR leaves the pod
-        "cat /tmp/auditor-client.csr",
+        "cat /work/auditor-client.csr",
     ])
     docs = [
         {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": meta("auditor-client-api", labels), "automountServiceAccountToken": False},
@@ -92,20 +101,23 @@ if stage == "keygen":
          "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor-client-api", "rd/egress-locked": "true"}}, "policyTypes": ["Egress"],
                   "egress": [{"to": [{"ipBlock": {"cidr": c}} for c in dict.fromkeys(a.split(":")[0] for a in api)],
                               "ports": [{"protocol": "TCP", "port": pt} for pt in dict.fromkeys(int(a.split(":")[1]) for a in api)]}]}},
-        api_job("auditor-client-keygen", image, script),
+        api_job("auditor-client-keygen", image, drv, init_script, script),
     ]
 elif stage == "put":
-    image, crt_file = sys.argv[3:5]
+    image, drv, crt_file = sys.argv[3:6]
     crt = open(crt_file).read().strip() + "\n"
-    script = "\n".join([
+    init_script = "\n".join([
         "set -eu",
         f"test \"$(openssl x509 -in /crt/tls.crt -noout -subject -nameopt RFC2253)\" = 'subject=CN={party}-auditor'",
+    ])
+    script = "\n".join([
+        "set -eu",
         "printf '{\"data\":{\"tls.crt\":\"%s\"}}' \"$(base64 -w0 /crt/tls.crt)\" > /tmp/patch.json",
         "kubectl patch secret " + SECRET + " --type=merge --patch-file /tmp/patch.json >/dev/null",
         NAMES,
     ])
     docs = [
         {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("auditor-client-crt", labels), "data": {"tls.crt": crt}},
-        api_job("auditor-client-put", image, script, mounts=[{"name": "crt", "mountPath": "/crt", "readOnly": True}], volumes=[{"name": "crt", "configMap": {"name": "auditor-client-crt"}}]),
+        api_job("auditor-client-put", image, drv, init_script, script, mounts=[{"name": "crt", "mountPath": "/crt", "readOnly": True}], volumes=[{"name": "crt", "configMap": {"name": "auditor-client-crt"}}]),
     ]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
