@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver]   (driver = the --role driver positive-control Pod only)"""
+"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver | peer <remote /32>...]
+(driver = the --role driver Pod only; peer = the --role peer Pod only, labelled ONLY rd-iroha3/role=peer, with the given remote P2P /32 addresses)"""
 import json
 import sys
 
 import yaml
 
 party, digest = sys.argv[1:3]
-drole = len(sys.argv) > 3 and sys.argv[3] == "driver"
-pname = "egress-probe-driver" if drole else "egress-probe"
+role = sys.argv[3] if len(sys.argv) > 3 else ""
+remotes = sys.argv[4:]
+drole, prole = role == "driver", role == "peer"
+pname = "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe"
+C1 = ("bi", "bank-a", "bank-b")
+same = C1 if party in C1 else ("bank-c",)
+foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 bad = []
-want = {("Pod", pname)} if drole else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
+want = {("Pod", pname)} if (drole or prole) else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
 if set(by) != want or len(docs) != len(want):
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)}")
 for (k, n), d in by.items():
@@ -28,7 +34,9 @@ if pod:
     c = s["containers"][0]
     checks = {
         "labels": (lab.get("rd-iroha3/role") == "driver" and "rd/egress-locked" not in lab and lab.get("rd-iroha3/party") == party) if drole else
+                  (lab == {"rd-iroha3/role": "peer"}) if prole else  # ONLY role=peer: no part-of/party, so no StatefulSet/Service selector (all need part-of+party+role) can match it
                   (lab.get("rd-iroha3/role") == "egress-probe" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party),
+        "no container ports": not c.get("ports"),
         "digest-pinned driver image": c["image"] == f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}",
         "imagePullSecrets ghcr-pull": s.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "imagePullPolicy Always": c.get("imagePullPolicy") == "Always",
@@ -48,12 +56,24 @@ if pod:
     for banned in ("seed", "private_key", "Authorization", "balance", "/v1/accounts"):  # the status read prints counts only
         if banned in script:
             bad.append(f"probe loop must read only /status counts, found {banned!r}")
-    for need in ("1.1.1.1", "8.8.8.8", "KUBERNETES_SERVICE_HOST", "ghcr.io", "sleep 15", f"{party}-0.{party}.rd-iroha3-{party}.svc.cluster.local",
-                 "GET /status HTTP/1.0", "(peers|blocks|view_changes)", "Accept: application/json", "http=", "ctype=", "bytes=", "# PARSE-BEGIN", "# PARSE-END"):
-        if need not in script:
-            bad.append(f"probe loop lacks {need!r}")
+    base = ("1.1.1.1", "8.8.8.8", "KUBERNETES_SERVICE_HOST", "ghcr.io", "sleep 15", f"{party}-0.{party}.rd-iroha3-{party}.svc.cluster.local")
+    status = ("GET /status HTTP/1.0", "(peers|blocks|view_changes)", "Accept: application/json", "http=", "ctype=", "bytes=", "# PARSE-BEGIN", "# PARSE-END")
+    if prole:  # NEW connections: every same-cluster peer on 1337 and 8080, every remote LB /32 on 1337 (positive); foreign driver (negative, also ingress-denied)
+        need = base + tuple(f"{q}-0.{q}.rd-iroha3-{q}.svc.cluster.local" for q in same) + ("for r in " + " ".join(remotes), "1337", "8080")
+        need += (f"driver.rd-iroha3-{foreign}.svc.cluster.local",) if foreign else ()
+        if "GET /status" in script:
+            bad.append("peer-role probe must not read /status")
+    else:
+        need = base + status
+        if drole and foreign:  # negative targets of driver-egress: another party's peer Torii and driver
+            need += (f"{foreign}-0.{foreign}.rd-iroha3-{foreign}.svc.cluster.local", f"driver.rd-iroha3-{foreign}.svc.cluster.local")
+    for n in need:
+        if n not in script:
+            bad.append(f"probe loop lacks {n!r}")
+    if prole and not remotes:
+        bad.append("peer-role check needs at least one remote /32 argument")
 np = by.get(("NetworkPolicy", "egress-probe-egress"))
-if np and not drole:
+if np and not (drole or prole):
     sp = np["spec"]
     c1 = ("bi", "bank-a", "bank-b")
     gw_ns = c1 if party in c1 else ("bank-c",)

@@ -43,6 +43,29 @@ for p in bi bank-a bank-b bank-c; do
   python3 -I scripts/check-egressprobe.py "$p" "$D" driver <<<"$out" || fails=$((fails + 1))
   python3 -I scripts/check-netpol-form.py "egressprobe-driver" <<<"$out" || fails=$((fails + 1))
 done
+# --role peer: the positive/negative control of peers-egress (R17): ONLY a Pod labelled rd-iroha3/role=peer (nothing else), remote P2P /32 values from the command line
+declare -A REM=([bi]="43.106.70.123/32" [bank-a]="43.106.70.123/32" [bank-b]="43.106.70.123/32" [bank-c]="147.139.197.22/32 147.139.195.93/32 8.215.12.88/32")
+for p in bi bank-a bank-b bank-c; do
+  args=(); rem=(); for r in ${REM[$p]}; do args+=(--remote-p2p "$r"); rem+=("${r%/32}"); done
+  out=$("$R" "$p" "$D" --role peer "${args[@]}" 2>&1) || { fail "$p --role peer: render failed: $out"; continue; }
+  python3 -I scripts/check-egressprobe.py "$p" "$D" peer "${rem[@]}" <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "egressprobe-peer" <<<"$out" || fails=$((fails + 1))
+done
+# MUTANTS of the peer-role Pod: any extra label (party/part-of => matches the Service/StatefulSet selectors) or a container port must FAIL the checker
+peer_out=$("$R" bi "$D" --role peer --remote-p2p 43.106.70.123/32)
+mutant() { # <label> <python statement on pod d>
+  python3 -I -c '
+import sys, yaml
+d = yaml.safe_load(sys.stdin.read()); exec(sys.argv[1]); print(yaml.safe_dump(d))' "$2" <<<"$peer_out" | python3 -I scripts/check-egressprobe.py bi "$D" peer 43.106.70.123 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the peer-role checker"
+}
+mutant "a peer-role probe also labelled rd-iroha3/party" 'd["metadata"]["labels"]["rd-iroha3/party"] = "bi"'
+mutant "a peer-role probe also labelled app.kubernetes.io/part-of" 'd["metadata"]["labels"]["app.kubernetes.io/part-of"] = "rd-iroha3"'
+mutant "a peer-role probe with a container port" 'd["spec"]["containers"][0]["ports"] = [{"containerPort": 1337}]'
+mutant "a peer-role probe with a service account token" 'd["spec"]["automountServiceAccountToken"] = True'
+refuse "--role peer without a remote /32" "usage" bi "$D" --role peer
+refuse "--role peer with a wide CIDR" "/32" bi "$D" --role peer --remote-p2p 10.0.0.0/8
+refuse "--role peer with a private address" "public" bi "$D" --role peer --remote-p2p 10.1.2.3/32
+refuse "--remote-p2p without --role peer" "usage" bi "$D" --remote-p2p 43.106.70.123/32
 refuse "an unknown --role" "usage" bi "$D" --role frob
 refuse "--role without a value" "usage" bi "$D" --role
 a=$("$R" bi "$D"); b=$("$R" bi "$D")

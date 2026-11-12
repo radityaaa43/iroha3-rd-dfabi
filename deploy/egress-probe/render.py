@@ -3,11 +3,28 @@ import json
 import sys
 
 party, digest = sys.argv[1:3]
-driver_role = len(sys.argv) > 3 and sys.argv[3] == "driver"
+role = sys.argv[3] if len(sys.argv) > 3 else "default"
+remotes = sys.argv[4:]
+driver_role, peer_role = role == "driver", role == "peer"
+foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
 ns = f"rd-iroha3-{party}"
 gw_ns = ("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",)
 labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
-pod_labels = {**labels, "rd-iroha3/role": "driver"} if driver_role else {**labels, "rd-iroha3/role": "egress-probe", "rd/egress-locked": "true"}
+pod_labels = ({**labels, "rd-iroha3/role": "driver"} if driver_role else {"rd-iroha3/role": "peer"} if peer_role  # peer role: ONLY this label (no part-of/party: no selector of any Service/StatefulSet matches it)
+              else {**labels, "rd-iroha3/role": "egress-probe", "rd/egress-locked": "true"})
+std_lines = r'''  line="$(date -u +%T) dns_own=$(dns PEER) dns_ghcr=$(dns ghcr.io) peer:8080=$(tcp PEER 8080) status=[$(st PEER)] 1.1.1.1:443=$(tcp 1.1.1.1 443) 8.8.8.8:53=$(tcp 8.8.8.8 53) apiserver:443=$(tcp "$KUBERNETES_SERVICE_HOST" 443) ghcr($GH):443=$(tcp "$GH" 443)"
+  for q in GWNS; do line="$line gw-$q:8443=$(dns gateway.rd-iroha3-$q.svc.cluster.local)/$(tcp gateway.rd-iroha3-$q.svc.cluster.local 8443)"; done
+'''
+foreign_peer = (r'''  line="$line foreign-peer-FOREIGN:8080=$(tcp FOREIGN-0.FOREIGN.rd-iroha3-FOREIGN.svc.cluster.local 8080)"
+'''.replace("FOREIGN", foreign) if foreign else "")  # another party's peer Torii: blocked by driver-egress (also ingress-denied: not attributable on its own)
+foreign_driver = (r'''  line="$line foreign-driver-FOREIGN:8091=$(tcp driver.rd-iroha3-FOREIGN.svc.cluster.local 8091)"
+'''.replace("FOREIGN", foreign) if foreign else "")  # another party's driver: blocked by egress (also ingress-denied: not attributable on its own)
+peer_lines = r'''  line="$(date -u +%T) dns_own=$(dns PEER) 1.1.1.1:443=$(tcp 1.1.1.1 443) 8.8.8.8:53=$(tcp 8.8.8.8 53) apiserver:443=$(tcp "$KUBERNETES_SERVICE_HOST" 443) ghcr($GH):443=$(tcp "$GH" 443)"
+''' + "".join(
+    f'''  line="$line peer-{q}:1337=$(tcp {q}-0.{q}.rd-iroha3-{q}.svc.cluster.local 1337) peer-{q}:8080=$(tcp {q}-0.{q}.rd-iroha3-{q}.svc.cluster.local 8080)"
+''' for q in gw_ns) + r'''  for r in REMOTES; do line="$line remote-$r:1337=$(tcp $r 1337)"; done
+''' + foreign_driver
+lines = peer_lines.replace("REMOTES", " ".join(remotes)) if peer_role else std_lines + (foreign_peer + foreign_driver if driver_role else "")
 loop = r'''tcp() { timeout 4 bash -c 'exec 3<>/dev/tcp/$0/$1' "$1" "$2" 2>/dev/null; case $? in 0) echo OPEN;; 124) echo TIMEOUT;; 1) echo REFUSED;; *) echo rc$?;; esac; }
 dns() { getent hosts "$1" >/dev/null 2>&1 && echo ok || echo NXDOMAIN; }
 # PARSE-BEGIN (tested on real-format fixtures: scripts/test-egressprobe.sh; prints http/ctype/bytes and the three counts, NEVER the body)
@@ -19,12 +36,13 @@ parse() { local f=$1 off
 st() { exec 3<>/dev/tcp/"$1"/8080 2>/dev/null || { echo "http=na"; return; }; printf 'GET /status HTTP/1.0\r\nHost: x\r\nAccept: application/json\r\n\r\n' >&3; timeout 4 cat <&3 > /tmp/st.raw; exec 3>&-; parse /tmp/st.raw; }
 while true; do
   GH=$(getent ahostsv4 ghcr.io 2>/dev/null | awk 'NR==1{print $1}'); GH=${GH:-none}
-  line="$(date -u +%T) dns_own=$(dns PEER) dns_ghcr=$(dns ghcr.io) peer:8080=$(tcp PEER 8080) status=[$(st PEER)] 1.1.1.1:443=$(tcp 1.1.1.1 443) 8.8.8.8:53=$(tcp 8.8.8.8 53) apiserver:443=$(tcp "$KUBERNETES_SERVICE_HOST" 443) ghcr($GH):443=$(tcp "$GH" 443)"
-  for q in GWNS; do line="$line gw-$q:8443=$(dns gateway.rd-iroha3-$q.svc.cluster.local)/$(tcp gateway.rd-iroha3-$q.svc.cluster.local 8443)"; done
-  echo "$line"
+@@LINES@@  echo "$line"
   sleep 15
 done
-'''.replace("PEER", f"{party}-0.{party}.rd-iroha3-{party}.svc.cluster.local").replace("GWNS", " ".join(gw_ns))
+'''.replace("@@LINES@@", lines).replace("PEER", f"{party}-0.{party}.rd-iroha3-{party}.svc.cluster.local").replace("GWNS", " ".join(gw_ns))
+if peer_role:  # no /status machinery in the peer-role probe (it opens TCP connections only)
+    a, b = loop.index("# PARSE-BEGIN"), loop.index("while true; do")
+    loop = loop[:a] + loop[b:]
 meta = lambda name, lab: {"name": name, "namespace": ns, "labels": lab}
 docs = [
     {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("egress-probe-egress", labels),
@@ -36,7 +54,7 @@ docs = [
                   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}}, "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}} for q in gw_ns],
                    "ports": [{"protocol": "TCP", "port": 8443}]},
               ]}},
-    {"apiVersion": "v1", "kind": "Pod", "metadata": meta("egress-probe-driver" if driver_role else "egress-probe", pod_labels),
+    {"apiVersion": "v1", "kind": "Pod", "metadata": meta("egress-probe-driver" if driver_role else "egress-probe-peer" if peer_role else "egress-probe", pod_labels),
      "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False, "enableServiceLinks": False, "imagePullSecrets": [{"name": "ghcr-pull"}],
               "securityContext": {"runAsNonRoot": True, "runAsUser": 1001, "runAsGroup": 1001, "seccompProfile": {"type": "RuntimeDefault"}},
               "containers": [{"name": "probe", "image": f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}", "imagePullPolicy": "Always",
@@ -46,6 +64,6 @@ docs = [
                               "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}],
               "volumes": [{"name": "tmp", "emptyDir": {"sizeLimit": "8Mi"}}]}},
 ]
-if driver_role:  # the positive control is the Pod alone (no policy selects it)
+if driver_role or peer_role:  # driver: the Pod alone (no probe policy selects it); peer: the Pod alone, selected by the REAL peers-egress
     docs = [d for d in docs if d["kind"] == "Pod"]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
