@@ -2,7 +2,7 @@
 # Print the in-namespace objects that give an AUDITOR its mTLS client leaf (S13 dependency D2; analyst P1 condition 4 + ruling OPTION C on the key: the key is made INSIDE a pod
 # in the auditor's own namespace and never leaves it). Writes nothing, calls no cluster, renders NO Secret (the org creates the EMPTY Secret auditor-client-cert itself:
 # `kubectl create secret generic auditor-client-cert -n rd-iroha3-<party>`, no data).
-#   deploy/auditor-sign/render.sh keygen <bi|bank-a|bank-b> <tools-image@sha256:digest> <sha256:driver digest> --apiserver <ip>/32:<port> [--apiserver ...]
+#   deploy/auditor-sign/render.sh keygen <bi|bank-a|bank-b> <tools-image@sha256:digest> <sha256:driver digest> --apiserver <endpoint ip>/32:6443 [--apiserver ...]
 #       SA auditor-client-api + Role (get/update/patch on resourceNames [auditor-client-cert] ONLY) + RoleBinding + NetworkPolicy auditor-client-api-egress (egress = the given API server
 #       addresses ONLY) + Job auditor-client-keygen: initContainer (the pinned DRIVER image: has openssl) makes the EC P-256 key + CSR (CN=<party>-auditor) into a MEMORY emptyDir; the main container (the pinned
 #       TOOLS image: kubectl, no openssl) refuses a non-empty Secret, patches ONLY tls.key into it and prints ONLY the CSR.
@@ -42,6 +42,9 @@ case $stage in
       while (( $# )); do
         [[ $1 == --apiserver && -n ${2:-} ]] || usage
         [[ $2 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32:[0-9]{1,5}$ ]] || { echo "render.sh: --apiserver must be <ipv4>/32:<port> (got '$2')" >&2; exit 2; }
+        # standing orchestrator rule (proven on both clusters 2026-11-12): an ipBlock on the kube Service ClusterIP :443 is CLOSED on this CNI; the API Service ENDPOINT IPs :6443 work.
+        # Pass the endpoint IPs (read them at apply time and quote them); the ClusterIP form is refused.
+        [[ $2 == *:6443 ]] || { echo "render.sh: --apiserver must be an API-server ENDPOINT <ipv4>/32:6443 (the ClusterIP :443 form is closed on this CNI): got '$2'" >&2; exit 2; }
         api+=("$2"); shift 2
       done
       (( ${#api[@]} >= 1 )) || usage

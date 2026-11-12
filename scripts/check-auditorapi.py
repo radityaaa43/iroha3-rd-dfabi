@@ -49,6 +49,8 @@ if stage == "keygen":
         if (sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "auditor-client-api", "rd/egress-locked": "true"}} or sp.get("policyTypes") != ["Egress"]
                 or "ingress" in sp or sp.get("egress") != want_eg):
             bad.append(f"NetworkPolicy auditor-client-api-egress: Egress-only, role=auditor-client-api + rd/egress-locked, ONLY the given API server /32:port (no DNS): {json.dumps(sp)}")
+        if ports != [6443]:
+            bad.append(f"API server port must be exactly 6443 (the endpoint form; the ClusterIP :443 form is closed on this CNI): {ports}")
         if any(not c.endswith("/32") for c in cidrs):
             bad.append("API server addresses must be /32")
 job = by.get(("Job", jname))

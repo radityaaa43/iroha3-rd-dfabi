@@ -72,15 +72,17 @@ cp "$T/ext2.csr" "$T/ext2-forced.csr"
 if runjob "$T/ext2.csr"; then fail "the Job script signed a CSR with a requested extension"; elif grep -q "requests extensions" "$T/err" && [[ ! -s $JOBOUT ]]; then ok "the Job script ABORTS on a CSR with a requested extension (its own message, empty stdout, no certificate)"; else fail "aborted for another reason: $(cat "$T/err")"; fi
 # ---- OPTION C stages: keygen (key made IN the pod, written into the pre-created empty Secret through a Role limited to get/update/patch on resourceNames [auditor-client-cert]) and put (public cert) ----
 TI=docker.io/alpine/k8s@sha256:$(printf 'b%.0s' $(seq 1 64))
-API=(--apiserver 10.200.0.1/32:443 --apiserver 172.24.11.240/32:6443)
+API=(--apiserver 172.24.11.240/32:6443 --apiserver 172.24.40.81/32:6443)
 refuse "keygen without --apiserver" "usage" keygen bi "$TI" "$D"
 refuse "keygen with a tag driver image" "driver image" keygen bi "$TI" debian:latest "${API[@]}"
 refuse "keygen with a tag image" "digest" keygen bi docker.io/alpine/k8s:3.19 "$D" "${API[@]}"
+refuse "keygen with the kube ClusterIP form 10.200.0.1/32:443 (CLOSED on this CNI)" "6443" keygen bi "$TI" "$D" --apiserver 10.200.0.1/32:443
+refuse "keygen with an apiserver endpoint on port 443" "6443" keygen bi "$TI" "$D" --apiserver 172.24.11.240/32:443
 refuse "keygen with a bad --apiserver" "--apiserver" keygen bi "$TI" "$D" --apiserver 10.200.0.1/24:443
 refuse "keygen for bank-c" "usage" keygen bank-c "$TI" "$D" "${API[@]}"
 for p in bi bank-a bank-b; do
   out=$("$R" keygen "$p" "$TI" "$D" "${API[@]}" 2>&1) || { fail "$p keygen render failed: $out"; continue; }
-  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" 10.200.0.1/32:443 172.24.11.240/32:6443 <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" 172.24.11.240/32:6443 172.24.40.81/32:6443 <<<"$out" || fails=$((fails + 1))
 done
 kg=$("$R" keygen bank-a "$TI" "$D" "${API[@]}")
 kmut() { # <label> <python on docs by (kind,name)>
@@ -88,7 +90,7 @@ kmut() { # <label> <python on docs by (kind,name)>
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
-exec(sys.argv[1]); print(yaml.safe_dump_all(docs))' "$2" <<<"$kg" | python3 -I scripts/check-auditorapi.py keygen bank-a "$TI" "$D" 10.200.0.1/32:443 172.24.11.240/32:6443 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the keygen checker"
+exec(sys.argv[1]); print(yaml.safe_dump_all(docs))' "$2" <<<"$kg" | python3 -I scripts/check-auditorapi.py keygen bank-a "$TI" "$D" 172.24.11.240/32:6443 172.24.40.81/32:6443 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the keygen checker"
 }
 RL='by[("Role","auditor-client-api")]["rules"][0]'
 kmut "the Role also allows create" "$RL"'["verbs"].append("create")'
@@ -100,6 +102,7 @@ kmut "the Role resourceNames naming another Secret" "$RL"'["resourceNames"].appe
 kmut "the Role on another resource too" "$RL"'["resources"].append("configmaps")'
 kmut "a ClusterRoleBinding style subject (another SA)" 'by[("RoleBinding","auditor-client-api")]["subjects"].append({"kind":"ServiceAccount","name":"default","namespace":"rd-iroha3-bank-a"})'
 kmut "the keygen NetworkPolicy also allows DNS" 'by[("NetworkPolicy","auditor-client-api-egress")]["spec"]["egress"].append({"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}}}],"ports":[{"protocol":"UDP","port":53}]})'
+kmut "the keygen NetworkPolicy also opens the ClusterIP 10.200.0.1:443" 'e = by[("NetworkPolicy","auditor-client-api-egress")]["spec"]["egress"][0]; e["to"].append({"ipBlock":{"cidr":"10.200.0.1/32"}}); e["ports"].append({"protocol":"TCP","port":443})'
 kmut "the keygen NetworkPolicy opens 0.0.0.0/0" 'by[("NetworkPolicy","auditor-client-api-egress")]["spec"]["egress"][0]["to"].append({"ipBlock":{"cidr":"0.0.0.0/0"}})'
 kmut "the keygen pod without rd/egress-locked" 'by[("Job","auditor-client-keygen")]["spec"]["template"]["metadata"]["labels"].pop("rd/egress-locked")'
 kmut "the keygen pod mounting a Secret volume" 'v = by[("Job","auditor-client-keygen")]["spec"]["template"]["spec"]["volumes"]; v.append({"name":"s","secret":{"secretName":"iroha3-role-ca"}})'

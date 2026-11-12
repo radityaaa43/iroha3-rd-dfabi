@@ -18,6 +18,26 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: "tools image gate: anonymous pull of the digest + key scan of its filesystem"
+        run: |
+          docker logout >/dev/null 2>&1 || true
+          docker pull -q "$TOOLS_IMAGE" >/dev/null
+          docker inspect --format '{{index .RepoDigests 0}}' "$TOOLS_IMAGE"
+          id=$(docker create "$TOOLS_IMAGE")
+          docker export "$id" > "$RUNNER_TEMP/fs.tar"
+          docker rm "$id" >/dev/null
+          python3 - "$RUNNER_TEMP/fs.tar" <<'PY'
+          import re, sys, tarfile
+          pat = re.compile(rb"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----")
+          hits = []
+          with tarfile.open(sys.argv[1]) as t:
+              for m in t:
+                  if m.isfile() and m.size < 8 * 1024 * 1024:
+                      if pat.search(t.extractfile(m).read()):
+                          hits.append(m.name)
+          print("files scanned; private-key hits:", hits)
+          sys.exit(1 if hits else 0)
+          PY
       - name: "tools image: kubectl --patch-file and base64 -w0, uid 1001, read-only root"
         run: |
           docker pull -q "$TOOLS_IMAGE" >/dev/null
