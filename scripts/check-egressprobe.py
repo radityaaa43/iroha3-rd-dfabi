@@ -10,8 +10,9 @@ import yaml
 party, digest = sys.argv[1:3]
 role = sys.argv[3] if len(sys.argv) > 3 else ""
 remotes = sys.argv[4:]
-drole, prole, grole, lrole = role == "driver", role == "peer", role == "gateway", role == "lb"
-pname = "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else "lb-probe" if lrole else "egress-probe"
+dmin = role == "driver-min"  # label ONLY rd-iroha3/role=driver: admitted by peers-torii/driver-egress, matches NO Service/Deployment selector
+drole, prole, grole, lrole = role in ("driver", "driver-min"), role == "peer", role == "gateway", role == "lb"
+pname = "egress-probe-driver-min" if dmin else "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else "lb-probe" if lrole else "egress-probe"
 C1 = ("bi", "bank-a", "bank-b")
 same = C1 if party in C1 else ("bank-c",)
 foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
@@ -36,7 +37,8 @@ if pod:
     lab, s = pod["metadata"]["labels"], pod["spec"]
     c = s["containers"][0]
     checks = {
-        "labels": (lab.get("rd-iroha3/role") == "driver" and "rd/egress-locked" not in lab and lab.get("rd-iroha3/party") == party) if drole else
+        "labels": (lab == {"rd-iroha3/role": "driver"}) if dmin else
+                  (lab.get("rd-iroha3/role") == "driver" and "rd/egress-locked" not in lab and lab.get("rd-iroha3/party") == party) if drole else
                   (lab == {"rd-iroha3/role": "peer"}) if prole else  # ONLY role=peer: no part-of/party, so no StatefulSet/Service selector (all need part-of+party+role) can match it
                   (lab == {"rd-iroha3/role": "gateway", "app.kubernetes.io/name": "gateway"}) if grole else  # no part-of/party: the gateway Service/Deployment selectors cannot match it
                   (lab == {"rd-iroha3/role": "lb-probe"}) if lrole else

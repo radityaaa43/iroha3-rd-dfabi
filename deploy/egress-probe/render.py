@@ -5,12 +5,13 @@ import sys
 party, digest = sys.argv[1:3]
 role = sys.argv[3] if len(sys.argv) > 3 else "default"
 remotes = sys.argv[4:]
-driver_role, peer_role, gw_role, lb_role = role == "driver", role == "peer", role == "gateway", role == "lb"
+dmin = role == "driver-min"
+driver_role, peer_role, gw_role, lb_role = role in ("driver", "driver-min"), role == "peer", role == "gateway", role == "lb"
 foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
 ns = f"rd-iroha3-{party}"
 gw_ns = ("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",)
 labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
-pod_labels = ({**labels, "rd-iroha3/role": "driver"} if driver_role else {"rd-iroha3/role": "peer"} if peer_role
+pod_labels = ({"rd-iroha3/role": "driver"} if dmin else {**labels, "rd-iroha3/role": "driver"} if driver_role else {"rd-iroha3/role": "peer"} if peer_role
               else {"rd-iroha3/role": "gateway", "app.kubernetes.io/name": "gateway"} if gw_role  # W1 admits name=gateway; no part-of/party: the gateway Service/Deployment selectors cannot match
               else {"rd-iroha3/role": "lb-probe"} if lb_role  # peer role: ONLY this label (no part-of/party: no selector of any Service/StatefulSet matches it)
               else {**labels, "rd-iroha3/role": "egress-probe", "rd/egress-locked": "true"})
@@ -66,7 +67,7 @@ docs = [
                   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}}, "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}} for q in gw_ns],
                    "ports": [{"protocol": "TCP", "port": 8443}]},
               ]}},
-    {"apiVersion": "v1", "kind": "Pod", "metadata": meta("egress-probe-driver" if driver_role else "egress-probe-peer" if peer_role else "egress-probe-gateway" if gw_role else "lb-probe" if lb_role else "egress-probe", pod_labels),
+    {"apiVersion": "v1", "kind": "Pod", "metadata": meta("egress-probe-driver-min" if dmin else "egress-probe-driver" if driver_role else "egress-probe-peer" if peer_role else "egress-probe-gateway" if gw_role else "lb-probe" if lb_role else "egress-probe", pod_labels),
      "spec": {"restartPolicy": "Never", **({"activeDeadlineSeconds": 1800} if (gw_role or lb_role) else {}), "automountServiceAccountToken": False, "enableServiceLinks": False, "imagePullSecrets": [{"name": "ghcr-pull"}],
               "securityContext": {"runAsNonRoot": True, "runAsUser": 1001, "runAsGroup": 1001, "seccompProfile": {"type": "RuntimeDefault"}},
               "containers": [{"name": "probe", "image": f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}", "imagePullPolicy": "Always",

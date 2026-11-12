@@ -45,11 +45,12 @@ cat > "$T/sel.py" <<'PY'
 import sys
 import yaml
 party, kind = sys.argv[1], sys.argv[2]
-PODNAME = {"peer": "egress-probe-peer", "gateway": "egress-probe-gateway", "lb": "lb-probe"}[kind]
+PODNAME = {"peer": "egress-probe-peer", "gateway": "egress-probe-gateway", "lb": "lb-probe", "driver-min": "egress-probe-driver-min"}[kind]
 WANT = {  # kind: (ingress policies selecting the probe, egress policies selecting the probe)
     "peer": (["peers-p2p", "peers-torii", "torii-bootstrap"], ["peers-egress"]),
     "gateway": (["gateway-ingress"], ["gateway-egress"]),
     "lb": ([], ["lb-probe-egress"]),
+    "driver-min": (["driver-ingress"], ["driver-egress"]),
 }[kind]
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 probe = [d for d in docs if d["kind"] == "Pod" and d["metadata"]["name"] == PODNAME]
@@ -95,7 +96,7 @@ print(f"ok:   probe-selectors {party} {kind}: {n} selectors checked, none matche
 PY
 for p in bi bank-a bank-b bank-c; do
   base=$(ns_render "$p" 2>&1) || { fail "$p: a render failed: ${base:0:300}"; continue; }
-  for k in peer gateway lb; do
+  for k in peer gateway lb driver-min; do
     out=$(printf '%s\n---\n%s\n' "$base" "$(probe_docs "$p" "$k" 2>&1)")
     python3 -I "$T/sel.py" "$p" "$k" <<<"$out" || fails=$((fails + 1))
   done

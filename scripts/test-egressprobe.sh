@@ -102,6 +102,17 @@ refuse "--role peer without a remote /32" "usage" bi "$D" --role peer
 refuse "--role peer with a wide CIDR" "/32" bi "$D" --role peer --remote-p2p 10.0.0.0/8
 refuse "--role peer with a private address" "public" bi "$D" --role peer --remote-p2p 10.1.2.3/32
 refuse "--remote-p2p without --role peer" "usage" bi "$D" --remote-p2p 43.106.70.123/32
+# --role driver-min: the P-pos of S14.G once gateways are live: label ONLY rd-iroha3/role=driver (no part-of/party): no Service `driver` endpoint, admitted by peers-torii and selected by driver-egress
+for p in bi bank-a bank-b bank-c; do
+  out=$("$R" "$p" "$D" --role driver-min 2>&1) || { fail "$p --role driver-min: render failed: $out"; continue; }
+  python3 -I scripts/check-egressprobe.py "$p" "$D" driver-min <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "egressprobe-driver-min" <<<"$out" || fails=$((fails + 1))
+done
+dm_out=$("$R" bi "$D" --role driver-min)
+python3 -I -c '
+import sys, yaml
+d = yaml.safe_load(sys.stdin.read()); d["metadata"]["labels"].update({"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": "bi"}); print(yaml.safe_dump(d))' <<<"$dm_out" | python3 -I scripts/check-egressprobe.py bi "$D" driver-min >/dev/null 2>&1 && fail "MUTANT driver-min probe with part-of+party labels passed" || ok "MUTANT: a driver-min probe also labelled part-of+party (matches Service driver) FAILS the checker"
+refuse "--role driver-min with a target" "usage" bi "$D" --role driver-min --lb-target 43.106.70.123/32
 refuse "an unknown --role" "usage" bi "$D" --role frob
 refuse "--role without a value" "usage" bi "$D" --role
 a=$("$R" bi "$D"); b=$("$R" bi "$D")
