@@ -13,23 +13,12 @@ echo 11111111-2222-4333-8444-555555555555 > "$P/chain_id"; printf 'hash:%s#ABCD\
 jq -n '[ "bi","bank-a","bank-b","bank-c" | {party: ., public_key: ("ea0130" + .), pop_hex: "0xaa"} ]' > "$P/peers.json"
 jq -n '{"bi":"x","bank-a":"x","bank-b":"x","bank-c":"x","bi-gov":"x"}' > "$P/accounts.json"
 for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
-cat > "$T/opa.yaml" <<'YAML'
-plugins:
-  envoy_ext_authz_grpc:
-    addr: 127.0.0.1:9191
-    path: gw/allow
-keys:
-  bi: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-  bank-a: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-  bank-b: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-  bank-c: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-YAML
 EI=envoyproxy/envoy@sha256:$(printf 'b%.0s' $(seq 1 64)); OI=openpolicyagent/opa@sha256:$(printf 'c%.0s' $(seq 1 64))
 ns_render() { # <party> -> all renders of that namespace on stdout
   local p=$1
   deploy/peers/render.sh --p2p-egress-cidr 198.51.100.7/32 "$p" $H $CIDR
   echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls
-  echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml"
+  echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI"
   echo "---"; deploy/auditor/render.sh "$p" "$D" "$P"
   if [[ $p == bi ]]; then echo "---"; deploy/pool-init/render.sh "$D" "$P" 1000 100; fi
 }
@@ -39,7 +28,7 @@ for p in bi bank-a bank-b; do
   python3 -I "$C" "$p" "${roles[@]}" <<<"$out" || fails=$((fails + 1))
 done
 # bank-c (cluster 2): peers + driver + gateway only (no auditor/pool-init there)
-out=$( { deploy/peers/render.sh --cluster 2 --p2p-egress-cidr 198.51.100.7/32 bank-c $H $CIDR; echo "---"; deploy/driver/render.sh bank-c "$D" "$P" --audit-tls --remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22; echo "---"; deploy/gateway/render.sh bank-c --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml" --cluster 2 --lb-acl acl-x --lb-range 203.0.113.9/32; } 2>&1) || fail "bank-c: a render failed: ${out:0:300}"
+out=$( { deploy/peers/render.sh --cluster 2 --p2p-egress-cidr 198.51.100.7/32 bank-c $H $CIDR; echo "---"; deploy/driver/render.sh bank-c "$D" "$P" --audit-tls --remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22; echo "---"; deploy/gateway/render.sh bank-c --envoy-image "$EI" --opa-image "$OI" --cluster 2 --lb-acl acl-x --lb-range 203.0.113.9/32; } 2>&1) || fail "bank-c: a render failed: ${out:0:300}"
 python3 -I "$C" bank-c peer=peers-egress driver=driver-egress gateway=gateway-egress <<<"$out" || fails=$((fails + 1))
 # MUTANTS on the bi namespace
 good=$(ns_render bi 2>&1)

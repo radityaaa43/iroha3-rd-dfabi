@@ -14,17 +14,6 @@ echo 11111111-2222-4333-8444-555555555555 > "$P/chain_id"; printf 'hash:%s#ABCD\
 jq -n '[ "bi","bank-a","bank-b","bank-c" | {party: ., public_key: ("ea0130" + .), pop_hex: "0xaa"} ]' > "$P/peers.json"
 jq -n '{"bi":"x","bank-a":"x","bank-b":"x","bank-c":"x","bi-gov":"x"}' > "$P/accounts.json"
 for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
-cat > "$T/opa.yaml" <<'YAML'
-plugins:
-  envoy_ext_authz_grpc:
-    addr: 127.0.0.1:9191
-    path: gw/allow
-keys:
-  bi: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-  bank-a: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-  bank-b: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-  bank-c: {algorithm: RS256, key: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"}
-YAML
 EI=envoyproxy/envoy@sha256:$(printf 'b%.0s' $(seq 1 64)); OI=openpolicyagent/opa@sha256:$(printf 'c%.0s' $(seq 1 64))
 ns_render() { # <party> -> every render of that namespace (no probe)
   local p=$1 c2=() gw2=() gwr=()
@@ -32,7 +21,7 @@ ns_render() { # <party> -> every render of that namespace (no probe)
   deploy/peers/render.sh "${c2[@]}" --p2p-egress-cidr 198.51.100.7/32 "$p" $H $CIDR
   echo "---"; deploy/p2p/render.sh "${c2[@]}" --acl-id acl-test --external-cidr 198.51.100.7/32 "$p"
   echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls "${gwr[@]}"
-  echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml" "${gw2[@]}"
+  echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI" "${gw2[@]}"
   if [[ $p != bank-c ]]; then echo "---"; deploy/auditor/render.sh "$p" "$D" "$P"; fi
   if [[ $p == bi ]]; then echo "---"; deploy/pool-init/render.sh "$D" "$P" 1000 100; fi
 }
