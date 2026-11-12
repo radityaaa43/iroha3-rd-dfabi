@@ -31,7 +31,7 @@ if cm:
     cfg = tomllib.loads(cm["data"]["rd-dfabi.toml"])
     urls = [f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443" for p in ("bi", "bank-a", "bank-b")]
     want_cfg = {"chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "party": "bi", "client_toml": "/work/client.toml",
-                "key_dir": "/keys", "pools_file": "/pools/pools.json"}
+                "key_dir": "/pools/keys", "pools_file": "/pools/pools.json"}
     for k, v in want_cfg.items():
         if cfg.get(k) != v:
             bad.append(f"rd-dfabi.toml {k} = {cfg.get(k)!r}, want {v!r}")
@@ -81,6 +81,14 @@ if job:
         if not good:
             bad.append(f"Job pool-init: {name}")
     cmd = " ".join(c.get("command", []) + c.get("args", []))
+    # pool-init WRITES BI's two origin (reserve) notes into key_dir (node-build pools.rs write_secret, create_new): key_dir must be the
+    # persistent PVC, never the read-only Secret mount (the activation would commit and the reserve secret be lost). bi.note is only
+    # linked from the Secret mount, never copied onto the disk.
+    for need in ("mkdir -p /pools/keys", "chmod 700 /pools/keys", "ln -s /keys/bi.note /pools/keys/bi.note"):
+        if need not in cmd:
+            bad.append(f"command lacks {need!r} (origin notes on the PVC, bi.note linked only)")
+    if "cp /keys" in cmd or "install -m 600 /keys" in cmd:
+        bad.append("bi.note must not be copied onto the PVC")
     for need in ("keys client-toml /work bi-gov", "--network-id-file /genesis/genesis.expected_hash", "pool-init /config/rd-dfabi.toml", f"--rd-reserve {rd}", f"--dfabi-reserve {dfabi}", "rm -f /work/bi-gov.seed"):
         if need not in cmd:
             bad.append(f"command lacks {need!r}")
