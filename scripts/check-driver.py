@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Check rendered S17 driver manifests on stdin. Usage: check-driver.py <party> <digest> <hash8> <chain-id> [tls [<remote /32>...]] [mint:<max_rd>:<max_dfabi>]
-(mint:… = rendered with --mint-enabled: the BI driver enables POST /mint; caps in the [auditor] table, parties from accounts.json)"""
+"""Check rendered S17 driver manifests on stdin. Usage: check-driver.py <party> <digest> <hash8> <chain-id> [tls [<remote /32>...] [gw:<party>=<ip>...]] [mint:<max_rd>:<max_dfabi>]
+(mint:… = rendered with --mint-enabled: the BI driver enables POST /mint; caps in the [auditor] table, parties from accounts.json;
+gw:<party>=<ip> = rendered with --remote-gw (bank-c): [tls.resolve] host -> ip:8443 and the same ip as a /32 ipBlock in driver-egress)"""
 import json
 import sys
 import tomllib
@@ -11,7 +12,9 @@ party, digest, h8, chain = sys.argv[1:5]
 mint = next((a for a in sys.argv[5:] if a.startswith("mint:")), None)
 args5 = [a for a in sys.argv[5:] if not a.startswith("mint:")]
 tlsmode = bool(args5) and args5[0] == "tls"  # rendered with --audit-tls (iroha3 S13 transport A)
-remote = args5[1:] if tlsmode else []  # --remote-gw-cidr values (gateways on the OTHER cluster, ipBlock TCP 8443)
+gw = dict(a[3:].split("=") for a in args5[1:] if a.startswith("gw:")) if tlsmode else {}  # --remote-gw party=ip (bank-c: gateways of cluster 1)
+remote = [a for a in args5[1:] if not a.startswith("gw:")] if tlsmode else []  # --remote-gw-cidr values (gateways on the OTHER cluster, ipBlock TCP 8443)
+remote_all = remote + [f"{gw[q]}/32" for q in ("bi", "bank-a", "bank-b") if q in gw]  # the NP /32s derived from --remote-gw come after the explicit ones
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -51,11 +54,18 @@ if cm:
                 bad.append(f"rd-dfabi.toml {k} = {cfg.get(k)!r}, want {v!r}")
         if cfg.get("assets") != {"rd": "7onbjg2gRXveoAAUFsohCZyGW98t", "dfabi": "4mBWK1JCwQdHLDPpuVKc56eLsXka"}:
             bad.append(f"assets must be the Base58 definition ids: {cfg.get('assets')}")
+        if tlsmode and party == "bank-c" and sorted(gw) != ["bank-a", "bank-b", "bi"]:
+            bad.append(f"bank-c --audit-tls needs gw:<party>=<ip> for bi, bank-a and bank-b (cluster 2 cannot resolve the cluster-1 gateway names): {sorted(gw)}")
+        if gw and party != "bank-c":
+            bad.append("--remote-gw is for bank-c only")
         urls = [f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443" for p in ("bi", "bank-a", "bank-b")]
         if tlsmode:
             if cfg.get("audit") != {"min_approvals": 2, "auditor_urls": urls}:
                 bad.append(f"[audit] must be 2-of-3 through the three gateways {urls}: {cfg.get('audit')}")
-            if cfg.get("tls") != {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}:
+            want_tls = {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}
+            if gw:  # the in-cluster names do not resolve on the other cluster: the driver gets host -> ip:port (node-build tls_http.rs:53-55); SAN of the gateway leaf stays gateway.rd-iroha3-<p>.svc[.cluster.local]
+                want_tls["resolve"] = {f"gateway.rd-iroha3-{q}.svc.cluster.local": f"{gw[q]}:8443" for q in ("bi", "bank-a", "bank-b")}
+            if cfg.get("tls") != want_tls:
                 bad.append(f"[tls]: {cfg.get('tls')}")
         elif "audit" in cfg or "tls" in cfg:
             bad.append("[audit]/[tls] only with --audit-tls")
@@ -189,12 +199,12 @@ else:
         {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
     ]
     if tlsmode:
-        want_eg.append({"to": [nsel(q, "gateway") for q in same] + [{"ipBlock": {"cidr": c}} for c in remote], "ports": [{"protocol": "TCP", "port": 8443}]})
+        want_eg.append({"to": [nsel(q, "gateway") for q in same] + [{"ipBlock": {"cidr": c}} for c in remote_all], "ports": [{"protocol": "TCP", "port": 8443}]})
     if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "driver"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
         bad.append(f"driver-egress: selector role=driver, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
     if sp.get("egress") != want_eg:
         bad.append(f"driver-egress rules differ from the intended destinations: {json.dumps(sp.get('egress'))}")
-    if any(not c.endswith("/32") for c in remote):
+    if any(not c.endswith("/32") for c in remote_all):
         bad.append("remote gateway CIDRs must be /32")
 
 cas = by.get(("ConfigMap", "gateway-server-cas"))
