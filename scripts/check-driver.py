@@ -46,7 +46,7 @@ if cm:
     else:
         cfg = tomllib.loads(cm["data"]["rd-dfabi.toml"])
         want = {
-            "chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "client_toml": "/keys/client.toml",
+            "chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "client_toml": "/client/client.toml",
             "peers_json": "/config/peers.json", "key_dir": "/keys", "fee_asset": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         }
         for k, v in want.items():
@@ -157,6 +157,11 @@ if dep:
     if any("bi-auditor-key" in json.dumps(v) or "auditor" in json.dumps(v) for v in pod["volumes"]):
         bad.append("the auditor key must never be mounted")
     mounts = {m["mountPath"]: m for m in c["volumeMounts"]}
+    # upstream iroha_config_base/src/toml.rs regular_file_metadata uses symlink_metadata and REFUSES a symlink: a Secret volume file is a symlink (..data/<file>), so client.toml
+    # must be a subPath mount (a bind mount of the real file). Found live: GET /balance -> 502 "Configuration source is not a regular file".
+    cmounts = [m for m in c["volumeMounts"] if m["mountPath"] == "/client/client.toml"]
+    if len(cmounts) != 1 or cmounts[0].get("subPath") != "client.toml" or cmounts[0].get("name") != "keys" or cmounts[0].get("readOnly") is not True:
+        bad.append(f"client.toml must be a read-only subPath mount of volume keys at /client/client.toml (a Secret volume file is a symlink and iroha refuses it): {cmounts}")
     for path in ("/keys", "/config", "/genesis"):
         if path not in mounts or mounts[path].get("readOnly") is not True:
             bad.append(f"volume mount {path} must exist and be readOnly")

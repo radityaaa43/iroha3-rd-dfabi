@@ -35,7 +35,7 @@ toml = "\n".join(
         f'chain = "{chain}"',
         'network_id_file = "/genesis/genesis.expected_hash"',
         'account_domain = "wonderland.universal"',
-        'client_toml = "/keys/client.toml"',
+        'client_toml = "/client/client.toml"',  # a subPath mount (below): a Secret volume file is a symlink and iroha_config_base refuses symlinks
         f'party = "{party}"  # the acting party (sponsor = this bank, node-build S10); set explicitly, never the default bi',
         'peers_json = "/config/peers.json"',
         'key_dir = "/keys"',
@@ -108,6 +108,7 @@ docs = [
                  "readinessProbe": {"httpGet": {"path": "/healthz", "port": "http"}, "periodSeconds": 5, "failureThreshold": 3, "timeoutSeconds": 2},
                  "volumeMounts": [
                      {"name": "keys", "mountPath": "/keys", "readOnly": True},
+                     {"name": "keys", "mountPath": "/client/client.toml", "subPath": "client.toml", "readOnly": True},
                      {"name": "config", "mountPath": "/config", "readOnly": True},
                      {"name": "genesis", "mountPath": "/genesis", "readOnly": True},
                  ] + ([{"name": "client-cert", "mountPath": "/tls/client", "readOnly": True},
