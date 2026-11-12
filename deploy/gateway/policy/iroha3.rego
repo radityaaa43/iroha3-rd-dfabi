@@ -16,6 +16,7 @@
 #   11    POST /mint                                                                                        lensa, node bi only
 #   12    GET /tx/<64 hex>                                                                                  lensa; bi role at node bi only
 #   14    GET /balance?asset=<Base58> (exactly one param)                                                   lensa only
+#   15    GET /keys, POST /approve of the node's own auditor (nodes bi, bank-a, bank-b)                     bank-*, bi; lensa GET /keys only
 # Query strings are allowed only in the rows that name them; a path with any other query never matches.
 package iroha3
 
@@ -147,6 +148,24 @@ route("bi") if {
 route("lensa") if {
 	method == "GET"
 	regex.match(`^/balance\?asset=[1-9A-HJ-NP-Za-km-z]{1,128}$`, path)
+}
+
+# Row 15 (S11 transport A; dfabi auditor_urls): every party's driver identity (its [tls] client leaf, CN = role: pool-init, the APS
+# coordinator) reads /keys and asks /approve of the auditor behind this gateway; Lensa only reads the public /keys. bank-c runs no
+# auditor, so nothing passes there; BI's /records stays closed.
+auditor_nodes := {"bi", "bank-a", "bank-b"}
+
+route(role) if {
+	role != "lensa"
+	own in auditor_nodes
+	method == "POST"
+	path == "/approve"
+}
+
+route(_) if {
+	own in auditor_nodes
+	method == "GET"
+	path == "/keys"
 }
 
 tx_detail if {
