@@ -5,6 +5,7 @@ import sys
 import tomllib
 
 party, digest, pub, network = sys.argv[1:5]
+pvc = len(sys.argv) > 5 and sys.argv[5] == "pvc"
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
 key_name = "bi-auditor" if party == "bi" else f"{party}-auditor"
@@ -27,7 +28,7 @@ labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
 role = {**labels, "rd-iroha3/role": "auditor"}
 toml = "\n".join(
     [
-        f"# rd-dfabi auditor config of {party} (public values only; keys come from Secret {key_name}-key, created by the org itself).",
+        f"# rd-dfabi auditor config of {party} (public values only; keys come from " + ("the audit-store PVC, created by the initContainer keys (create-only)" if pvc else f"Secret {key_name}-key, created by the org itself") + ").",
         f'chain = "{chain}"',
         'network_id_file = "/genesis/genesis.expected_hash"',
         f'party = "{party}"',
@@ -58,6 +59,23 @@ toml = "\n".join(
     ]
 )
 tomllib.loads(toml)
+# --keys-in-pvc: the key pair is created INSIDE the pod's namespace, on the auditor's own PVC, by the driver image itself. Create-only (the CLI uses create_new), never overwrites,
+# a half pair is an error (never complete it), only PUBLIC material is printed (the signing public key and its sha256; the hybrid public key is read via GET /keys).
+KEYS_SCRIPT = "\n".join([
+    "set -eu",
+    "umask 077",
+    f'N={key_name}; D=/state/keys',
+    'mkdir -p /state/keys /state/store',
+    's="$D/$N.seed"; h="$D/$N.hybrid"',
+    'if [ -e "$s" ] && [ -e "$h" ]; then echo "keys present"; exit 0; fi',
+    'if [ -e "$s" ] || [ -e "$h" ]; then echo "exactly one of the two key files exists: refusing to complete a half pair" >&2; exit 1; fi',
+    'out=$(/usr/local/bin/rd-dfabi keys new "$D" "$N")',
+    '/usr/local/bin/rd-dfabi keys new-hybrid "$D" "$N" >/dev/null',
+    'chmod 0400 "$s" "$h"',
+    'pub=${out#* }',
+    'echo "keys created: signing public key $pub"',
+    'echo "signing public key sha256 $(printf %s "$pub" | sha256sum | cut -d" " -f1)"',
+])
 meta = lambda name: {"name": name, "namespace": ns, "labels": labels}
 docs = [
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("auditor-config"),
@@ -76,6 +94,15 @@ docs = [
              "imagePullSecrets": [{"name": "ghcr-pull"}],
              "securityContext": {"runAsNonRoot": True, "runAsUser": 1001, "runAsGroup": 1001, "fsGroup": 1001,
                                  "seccompProfile": {"type": "RuntimeDefault"}},
+             **({"initContainers": [{
+                 "name": "keys",
+                 "image": f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}",
+                 "imagePullPolicy": "IfNotPresent",
+                 "command": ["/bin/sh", "-c", KEYS_SCRIPT],
+                 "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"cpu": "200m", "memory": "64Mi"}},
+                 "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
+                 "volumeMounts": [{"name": "state", "mountPath": "/state"}],
+             }]} if pvc else {}),
              "containers": [{
                  "name": "auditor",
                  "image": f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}",
@@ -86,19 +113,19 @@ docs = [
                  "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
                  "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
                  "volumeMounts": [
-                     {"name": "keys", "mountPath": "/keys", "readOnly": True},
+                     ({"name": "state", "mountPath": "/keys", "subPath": "keys", "readOnly": True} if pvc else {"name": "keys", "mountPath": "/keys", "readOnly": True}),
                      {"name": "config", "mountPath": "/config", "readOnly": True},
                      {"name": "genesis", "mountPath": "/genesis", "readOnly": True},
-                     {"name": "store", "mountPath": "/audit-store"},
+                     ({"name": "state", "mountPath": "/audit-store", "subPath": "store"} if pvc else {"name": "store", "mountPath": "/audit-store"}),
                  ],
              }],
              "volumes": [
-                 {"name": "keys", "secret": {"secretName": f"{key_name}-key", "defaultMode": 0o400,
-                                             "items": [{"key": f"{key_name}.seed", "path": f"{key_name}.seed"},
-                                                       {"key": f"{key_name}.hybrid", "path": f"{key_name}.hybrid"}]}},
+                 *([] if pvc else [{"name": "keys", "secret": {"secretName": f"{key_name}-key", "defaultMode": 0o400,
+                                                              "items": [{"key": f"{key_name}.seed", "path": f"{key_name}.seed"},
+                                                                        {"key": f"{key_name}.hybrid", "path": f"{key_name}.hybrid"}]}}]),
                  {"name": "config", "configMap": {"name": "auditor-config"}},
                  {"name": "genesis", "configMap": {"name": f"genesis-{h8}"}},
-                 {"name": "store", "persistentVolumeClaim": {"claimName": "audit-store"}},
+                 {"name": "state" if pvc else "store", "persistentVolumeClaim": {"claimName": "audit-store"}},
              ],
          }},
      }},
