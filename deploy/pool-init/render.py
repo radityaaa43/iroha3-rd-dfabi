@@ -30,6 +30,7 @@ toml = "\n".join(
         "# rd-dfabi config of the S13 pool-init Job (public values only; the governance seed comes from Secret bi-gov-key).",
         f'chain = "{chain}"',
         'network_id_file = "/genesis/genesis.expected_hash"',
+        'account_domain = "wonderland.universal"',
         'party = "bi"',
         'client_toml = "/work/client.toml"',
         'peers_json = "/config/peers.json"',

@@ -35,6 +35,13 @@ if cm:
     for k, v in want_cfg.items():
         if cfg.get(k) != v:
             bad.append(f"rd-dfabi.toml {k} = {cfg.get(k)!r}, want {v!r}")
+    # the driver image's Config (node-build driver/src/config.rs `Config`) has no serde default for these: a missing one makes
+    # rd-dfabi exit 1 at start ("missing field `account_domain`", same as the auditor before #74)
+    missing = [k for k in ("chain", "network_id_file", "account_domain", "peers_json", "key_dir", "fee_asset", "auditor_url", "torii", "assets", "lanes") if k not in cfg]
+    if missing:
+        bad.append(f"rd-dfabi.toml lacks required Config fields {missing}")
+    elif cfg["account_domain"] != "wonderland.universal":
+        bad.append(f"rd-dfabi.toml account_domain = {cfg['account_domain']!r}, want 'wonderland.universal' (as the auditor and driver configs)")
     if cfg.get("audit") != {"min_approvals": 2, "auditor_urls": urls}:
         bad.append(f"[audit] must be 2-of-3 through the three gateways: {cfg.get('audit')}")
     if cfg.get("tls") != {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}:
