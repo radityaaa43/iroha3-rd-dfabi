@@ -38,7 +38,7 @@ parse() { local f=$1 off
   echo "http=$(head -c 16 "$f" | head -1 | cut -d' ' -f2) ctype=$(LC_ALL=C head -c "$off" "$f" | tr -d '\r' | grep -ai '^content-type:' | head -1 | cut -d' ' -f2 | cut -d';' -f1) bytes=$(( $(wc -c < "$f") - off - 2 )) counts=[$(LC_ALL=C tail -c +"$((off + 3))" "$f" | tr -d '\n\r' | grep -aoE '"(peers|blocks|view_changes)" *: *[0-9]+' | tr -d '" ' | tr '\n' ' ')]"
 }
 # PARSE-END
-st() { exec 3<>/dev/tcp/"$1"/8080 2>/dev/null || { echo "http=na"; return; }; printf 'GET /status HTTP/1.0\r\nHost: x\r\nAccept: application/json\r\n\r\n' >&3; timeout 4 cat <&3 > /tmp/st.raw; exec 3>&-; parse /tmp/st.raw; }
+st() { [ "$(tcp "$1" 8080)" = OPEN ] || { echo "http=na"; return; }; exec 3<>/dev/tcp/"$1"/8080 2>/dev/null || { echo "http=na"; return; }; printf 'GET /status HTTP/1.0\r\nHost: x\r\nAccept: application/json\r\n\r\n' >&3; timeout 4 cat <&3 > /tmp/st.raw; exec 3>&-; parse /tmp/st.raw; }
 while true; do
   GH=$(getent ahostsv4 ghcr.io 2>/dev/null | awk 'NR==1{print $1}'); GH=${GH:-none}
 @@LINES@@  echo "$line"
