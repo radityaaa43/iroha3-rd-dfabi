@@ -9,25 +9,6 @@ ok() { echo "ok:   $*"; }
 T=$(mktemp -d); trap 'rm -r -- "$T"' EXIT
 EI=example.io/envoy@sha256:$(printf 'e%.0s' $(seq 1 64))
 OI=example.io/opa@sha256:$(printf 'f%.0s' $(seq 1 64))
-cat > "$T/opa.yaml" <<'EOF'
-plugins:
-  envoy_ext_authz_grpc:
-    addr: 127.0.0.1:9191
-    path: gw/allow
-keys:
-  bi: &k
-    algorithm: RS256
-    key: |
-      -----BEGIN PUBLIC KEY-----
-      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
-      -----END PUBLIC KEY-----
-  bank-a: *k
-  bank-b: *k
-  bank-c: *k
-EOF
-sed 's/^  bank-a: \*k$/  other: *k/' "$T/opa.yaml" > "$T/opa-nokey-for-a.yaml"
-sed 's/PUBLIC KEY/PRIVATE KEY/' "$T/opa.yaml" > "$T/opa-private.yaml"
-printf 'plugins: {}\n' > "$T/opa-nokeys.yaml"
 ACL=acl-d9ji5nwbqutwulof33ydb
 
 refuse() { # <label> <expected message part> <args...>
@@ -36,15 +17,12 @@ refuse() { # <label> <expected message part> <args...>
   err=$("$R" "$@" 2>&1 >/dev/null); rc=$?
   [[ $rc -eq 2 && $err == *"$part"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused as expected (rc=$rc: $err)"
 }
-base=(--envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml")
+base=(--envoy-image "$EI" --opa-image "$OI")
 refuse "no arguments" "usage"
 refuse "an unknown party" "usage" nobody "${base[@]}"
-refuse "an envoy tag instead of a digest" "digest" bi --envoy-image envoy:v1 --opa-image "$OI" --opa-config "$T/opa.yaml"
-refuse "an opa tag instead of a digest" "digest" bi --envoy-image "$EI" --opa-image opa:latest --opa-config "$T/opa.yaml"
-refuse "a missing opa config" "opa-config" bi --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/none.yaml"
-refuse "an opa config with a private key" "private key" bi --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa-private.yaml"
-refuse "an opa config without keys and plugin" "keys" bi --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa-nokeys.yaml"
-refuse "an opa config whose keys block lacks the party id (bundle signing keyid = party)" "bank-a" bank-a --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa-nokey-for-a.yaml"
+refuse "an envoy tag instead of a digest" "digest" bi --envoy-image envoy:v1 --opa-image "$OI"
+refuse "an opa tag instead of a digest" "digest" bi --envoy-image "$EI" --opa-image opa:latest
+refuse "the old --opa-config (iroha3 has its own policy, no besu bundle)" "usage" bi "${base[@]}" --opa-config /dev/null
 refuse "bank-c on cluster 1" "cluster" bank-c "${base[@]}" --cluster 1
 refuse "bi on cluster 2" "cluster" bi "${base[@]}" --cluster 2
 refuse "cluster 2 without --lb-acl" "lb-acl" bank-c "${base[@]}" --cluster 2 --lb-range 47.237.84.150/32
@@ -89,5 +67,18 @@ gw_mut "the gateway anti-affinity made REQUIRED" 'a = ps["affinity"]["podAntiAff
 gw_mut "the gateway affinity missing" 'ps.pop("affinity")'
 gw_mut "the gateway term on topologyKey zone" 'ps["affinity"]["podAntiAffinity"]["preferredDuringSchedulingIgnoredDuringExecution"][0]["podAffinityTerm"]["topologyKey"] = "topology.kubernetes.io/zone"'
 gw_mut "a nodeAffinity added to the gateway" 'ps["affinity"]["nodeAffinity"] = {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": []}}'
+pol_mut() { # <label> <python statement on the gateway-policy data dict pd>
+  local m; m=$("$R" bi "${base[@]}" | python3 -I -c '
+import sys, json, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
+for d in docs:
+    if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "gateway-policy":
+        pd = d["data"]; exec(sys.argv[1])
+print("\n---\n".join(json.dumps(d) for d in docs))' "$2")
+  python3 -I scripts/check-gateway.py bi 1 "$EI" "$OI" <<<"$m" >/dev/null 2>&1 && fail "MUTANT $1 passed the gateway checker" || ok "MUTANT: $1 FAILS the gateway checker"
+}
+pol_mut "the /transfer row dropped from the shipped policy" 'pd["iroha3.rego"] = pd["iroha3.rego"].replace(", \"/transfer\"", "")'
+pol_mut "a Lensa CA missing from data.json" 'x = json.loads(pd["data.json"]); x["iroha3_config"]["iroha3_ca"]["lensa"].pop("bank-c"); pd["data.json"] = json.dumps(x)'
+pol_mut "the policy ConfigMap without data.json" 'pd.pop("data.json")'
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
