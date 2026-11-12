@@ -3,7 +3,7 @@
 the UNION of all policies selecting it, so an extra or wildcard policy silently widens it). Input on stdin: rendered YAML/JSON NetworkPolicy documents of one namespace, or a
 `kubectl get netpol -o json` List (live use, cluster-admin read-only). Usage: check-egress-union.py <label> <role>=<policy> [<role>=<policy> ...]
 A policy selects a role pod when every matchLabels pair of its podSelector is in the pod's labels {rd-iroha3/role: <role>, + the party/part-of labels} and it has no
-matchExpressions (an empty podSelector {} selects every pod)."""
+matchExpressions (an empty podSelector {} selects every pod). Any Egress policy with matchExpressions, an empty podSelector or egress [{}] FAILS outright."""
 import json
 import sys
 
@@ -19,9 +19,20 @@ for d in yaml.safe_load_all(raw):
     docs += d["items"] if d.get("kind") == "List" else [d]
 pols = [d for d in docs if d.get("kind") == "NetworkPolicy"]
 bad = []
+# baseline blind spot: an Egress policy that selects by matchExpressions (e.g. allow-dns-egress: rd/egress-locked DoesNotExist) or by an empty selector, or that allows all (egress [{}]),
+# widens every pod it selects, whatever the per-role names say. None may exist in the namespace.
+for p in pols:
+    spec = p["spec"]
+    if "Egress" not in (spec.get("policyTypes") or []):
+        continue
+    ps = spec.get("podSelector") or {}
+    why = [w for w, hit in (("matchExpressions selector", bool(ps.get("matchExpressions"))), ("empty podSelector", not ps.get("matchLabels") and not ps.get("matchExpressions")),
+                            ("egress [{}] (allow-all)", spec.get("egress") == [{}])) if hit]
+    if why:
+        bad.append(f"Egress policy {p['metadata']['name']}: " + ", ".join(why) + " (forbidden in the namespace)")
 for role, name in want.items():
     pod = {"rd-iroha3/role": role, "app.kubernetes.io/part-of": "rd-iroha3"}
-    if role in ("pool-init", "lensa-sign", "egress-probe"):  # key-mounting / locked pods carry the rd/egress-locked label their own policy selects
+    if role in ("pool-init", "lensa-sign", "egress-probe", "auditor"):  # key-mounting / locked pods carry the rd/egress-locked label their own policy selects
         pod["rd/egress-locked"] = "true"
     sel = []
     for p in pols:

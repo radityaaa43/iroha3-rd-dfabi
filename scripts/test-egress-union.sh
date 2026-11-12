@@ -60,6 +60,10 @@ import sys, json, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d and not (d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == "driver-egress")]
 print("\n---\n".join(json.dumps(d) for d in docs))' <<<"$good")
 python3 -I "$C" m "${roles[@]}" <<<"$no_driver" >/dev/null 2>&1 && fail "MUTANT missing driver-egress passed" || ok "MUTANT: a missing driver-egress FAILS the union (role selected by NONE)"
+# blind spot (fabric): a baseline like allow-dns-egress (podSelector by matchExpressions, egress [{}]) selects every UNLOCKED pod but the role check skipped matchExpressions policies
+python3 -I "$C" m "${roles[@]}" <<<"$(extra "$(mk allow-dns-egress '{matchExpressions: [{key: rd/egress-locked, operator: DoesNotExist}]}' '[{}]')")" >/dev/null 2>&1 && fail "MUTANT matchExpressions allow-all baseline passed" || ok "MUTANT: an Egress policy with matchExpressions (allow-dns-egress style) FAILS"
+python3 -I "$C" m "${roles[@]}" <<<"$(extra "$(mk empty-sel '{}' '[]')")" >/dev/null 2>&1 && fail "MUTANT empty-selector Egress policy passed" || ok "MUTANT: an Egress policy with an empty podSelector FAILS"
+python3 -I "$C" m "${roles[@]}" <<<"$(extra "$(mk allow-all-other '{matchLabels: {rd-iroha3/role: unrelated}}' '[{}]')")" >/dev/null 2>&1 && fail "MUTANT egress [{}] on another role passed" || ok "MUTANT: an Egress policy with egress [{}] FAILS even for a role we do not list"
 python3 -I "$C" m peer=peers-egress <<<"$(extra "$(mk ingress-only '{}' '[]' | sed 's/policyTypes: \[Egress\]/policyTypes: [Ingress]/')")" >/dev/null 2>&1 && ok "an Ingress-only policy with podSelector {} does NOT count (not Egress-typed)" || fail "an Ingress-only policy was counted"
 live=$(python3 -I -c '
 import sys, json, yaml

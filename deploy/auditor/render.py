@@ -4,8 +4,12 @@ import re
 import sys
 import tomllib
 
+import yaml
+
 party, digest, pub, network = sys.argv[1:5]
-pvc = len(sys.argv) > 5 and sys.argv[5] == "pvc"
+pvc = "pvc" in sys.argv[5:]
+gwtls = "gwtls" in sys.argv[5:]
+bankc_ip = next((a.split(":", 1)[1] for a in sys.argv[5:] if a.startswith("bankc:")), "")
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
 key_name = "bi-auditor" if party == "bi" else f"{party}-auditor"
@@ -38,7 +42,7 @@ toml = "\n".join(
         'auditor_url = "unused-by-the-auditor:8090"',
         "",
         "[torii]",
-        *[f'{p} = "http://{p}-0.{p}.rd-iroha3-{p}.svc.cluster.local:8080/"' for p in PARTIES],
+        *[f'{p} = "http://127.0.0.1:{18101 + i}/"' if gwtls else f'{p} = "http://{p}-0.{p}.rd-iroha3-{p}.svc.cluster.local:8080/"' for i, p in enumerate(PARTIES)],
         "",
         "[assets]",
         f'rd = "{rd}"',
@@ -76,19 +80,51 @@ KEYS_SCRIPT = "\n".join([
     'echo "keys created: signing public key $pub"',
     'echo "signing public key sha256 $(printf %s "$pub" | sha256sum | cut -d" " -f1)"',
 ])
+# --gw-tls: localhost mTLS sidecar (analyst ruling P1). Four DISTINCT loopback listeners (the quorum client wants four distinct http URLs, upstream private_settlement.rs:330-358), each one
+# route to ONE upstream = that party's gateway :8443, pinning ONLY that party's own server CA (no system roots, no skip-verify), SAN-matched, presenting the auditor's client leaf.
+ENVOY_IMAGE = "envoyproxy/envoy@sha256:b1f389c3a6148e85e9de364cb867aa2e5802153abb37ad80f1f2241d693da32a"  # the pinned official image of the gateways (pull-tested in the 4 namespaces)
+def sidecar_envoy():
+    listeners, clusters = [], []
+    for i, q in enumerate(PARTIES):
+        host = f"gateway.rd-iroha3-{q}.svc.cluster.local"
+        port = 18101 + i
+        listeners.append({"name": f"to-{q}", "address": {"socket_address": {"address": "127.0.0.1", "port_value": port}},
+                          "filter_chains": [{"filters": [{"name": "envoy.filters.network.http_connection_manager", "typed_config": {
+                              "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                              "stat_prefix": f"to_{q}", "codec_type": "AUTO",
+                              "route_config": {"name": f"to-{q}", "virtual_hosts": [{"name": f"to-{q}", "domains": ["*"], "routes": [
+                                  {"match": {"prefix": "/"}, "route": {"cluster": f"gw-{q}", "timeout": "130s"}}]}]},
+                              "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {
+                                  "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]})
+        # bank-c's gateway is on the OTHER cluster: reached by the address of its gateway-lb (ACL-protected), the TLS name stays the gateway's
+        remote = q == "bank-c" and party != "bank-c"
+        addr = bankc_ip if remote else host
+        clusters.append({"name": f"gw-{q}", "type": "STATIC" if remote else "STRICT_DNS", "connect_timeout": "3s", "dns_lookup_family": "V4_ONLY",
+                         "load_assignment": {"cluster_name": f"gw-{q}", "endpoints": [{"lb_endpoints": [{"endpoint": {"address": {"socket_address": {"address": addr, "port_value": 8443}}}}]}]},
+                         "transport_socket": {"name": "envoy.transport_sockets.tls", "typed_config": {
+                             "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext", "sni": host,
+                             "common_tls_context": {
+                                 "tls_params": {"tls_minimum_protocol_version": "TLSv1_2"},
+                                 "tls_certificates": [{"certificate_chain": {"filename": "/client/tls.crt"}, "private_key": {"filename": "/client/tls.key"}}],
+                                 "validation_context": {"trusted_ca": {"filename": f"/server-cas/{q}-server-ca.pem"},
+                                                        "match_typed_subject_alt_names": [{"san_type": "DNS", "matcher": {"exact": host}}]}}}}})
+    return {"static_resources": {"listeners": listeners, "clusters": clusters}}
 meta = lambda name: {"name": name, "namespace": ns, "labels": labels}
 docs = [
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("auditor-config"),
      "data": {"rd-dfabi.toml": toml, "peers.json": json.dumps(peers, indent=2) + "\n"}},
     {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": meta("audit-store"),
      "spec": {"storageClassName": "alicloud-essd-wffc", "accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}},
+    *([{"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("auditor-gw-envoy"), "data": {"envoy.yaml": yaml.safe_dump(sidecar_envoy(), sort_keys=True, default_flow_style=False)}},
+       {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("auditor-server-cas"),
+        "data": {f"{q}-server-ca.pem": open(f"{pub}/gateway-ca/{q}-server-ca.pem").read() for q in PARTIES}}] if gwtls else []),
     {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {**meta("auditor"), "labels": role},
      "spec": {
          "replicas": 1,
          # RWO volume and one approver at a time: never two pods.
          "strategy": {"type": "Recreate"},
          "selector": {"matchLabels": role},
-         "template": {"metadata": {"labels": role}, "spec": {
+         "template": {"metadata": {"labels": {**role, "rd/egress-locked": "true"}}, "spec": {
              "automountServiceAccountToken": False,
              "enableServiceLinks": False,
              "imagePullSecrets": [{"name": "ghcr-pull"}],
@@ -118,7 +154,18 @@ docs = [
                      {"name": "genesis", "mountPath": "/genesis", "readOnly": True},
                      ({"name": "state", "mountPath": "/audit-store", "subPath": "store"} if pvc else {"name": "store", "mountPath": "/audit-store"}),
                  ],
-             }],
+             }, *([{
+                 "name": "gw-tls",
+                 "image": ENVOY_IMAGE,
+                 "imagePullPolicy": "IfNotPresent",
+                 "args": ["-c", "/config/envoy.yaml", "--log-level", "warn"],
+                 "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"cpu": "500m", "memory": "128Mi"}},
+                 "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
+                 "volumeMounts": [{"name": "envoy-config", "mountPath": "/config", "readOnly": True},
+                                  {"name": "server-cas", "mountPath": "/server-cas", "readOnly": True},
+                                  {"name": "client-cert", "mountPath": "/client", "readOnly": True},
+                                  {"name": "tmp", "mountPath": "/tmp"}],
+             }] if gwtls else [])],
              "volumes": [
                  *([] if pvc else [{"name": "keys", "secret": {"secretName": f"{key_name}-key", "defaultMode": 0o400,
                                                               "items": [{"key": f"{key_name}.seed", "path": f"{key_name}.seed"},
@@ -126,6 +173,11 @@ docs = [
                  {"name": "config", "configMap": {"name": "auditor-config"}},
                  {"name": "genesis", "configMap": {"name": f"genesis-{h8}"}},
                  {"name": "state" if pvc else "store", "persistentVolumeClaim": {"claimName": "audit-store"}},
+                 *([{"name": "envoy-config", "configMap": {"name": "auditor-gw-envoy"}},
+                    {"name": "server-cas", "configMap": {"name": "auditor-server-cas"}},
+                    # the client leaf (tls.crt, tls.key) is created IN this namespace by the signing Job from this org's own role CA; never rendered
+                    {"name": "client-cert", "secret": {"secretName": "auditor-client-cert", "defaultMode": 0o400}},
+                    {"name": "tmp", "emptyDir": {}}] if gwtls else []),
              ],
          }},
      }},
@@ -135,15 +187,18 @@ docs = [
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}, "policyTypes": ["Ingress"],
               "ingress": [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}],
                            "ports": [{"protocol": "TCP", "port": 8090}]}]}},
-    # R17 (key-holding pod: the auditor seed): its own narrow Egress policy, applied together with it. DNS and its own party's Torii only;
+    # R17 (key-holding pod: the auditor seed): its own narrow Egress policy, applied together with it. The pod also carries rd/egress-locked=true (a namespace allow-all-egress baseline that
+    # skips locked pods, e.g. allow-dns-egress, then never widens it) and this policy selects on that label too. DNS and its own party's Torii only;
     # approvals arrive INBOUND through the gateway, so no cross-party and no internet egress.
     {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("auditor-egress"),
-     "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}, "policyTypes": ["Egress"],
+     "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor", "rd/egress-locked": "true"}}, "policyTypes": ["Egress"],
               "egress": [
                   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
                    "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-                  {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
+                  *([{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}}, "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
+                             for q in ("bi", "bank-a", "bank-b")] + [{"ipBlock": {"cidr": f"{bankc_ip}/32"}}], "ports": [{"protocol": "TCP", "port": 8443}]}] if gwtls else
+                    [{"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]}]),
               ]}},
 ]
 print("\n---\n".join(json.dumps(d, indent=2) for d in docs))
