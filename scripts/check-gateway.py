@@ -34,7 +34,7 @@ for (k, n), d in by.items():
 if any(k == "Secret" for k, _ in by):
     bad.append("a Secret must never be rendered (the server cert and the client CA are created outside the render)")
 flat = json.dumps(docs)
-for banned in ("nodeSelector", "nodeName", "affinity", "priorityClassName", "hostNetwork", "65536", "max_request_bytes", "with_request_body", "sink", ":8081"):
+for banned in ("nodeSelector", "nodeName", "nodeAffinity", "priorityClassName", "hostNetwork", "65536", "max_request_bytes", "with_request_body", "sink", ":8081"):
     if banned in flat:
         bad.append(f"rendered objects must not contain {banned!r}")
 
@@ -150,6 +150,12 @@ if dep:
     pod = dep["spec"]["template"]["spec"]
     if pod.get("automountServiceAccountToken") is not False:
         bad.append("gateway: automountServiceAccountToken must be false")
+    # R22 (co-location): PREFERRED (never required: a gateway must still schedule when nodes are scarce) spread of gateways across workers and rd-iroha3 namespaces
+    if pod.get("affinity") != {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{"weight": 100, "podAffinityTerm": {
+            "topologyKey": "kubernetes.io/hostname",
+            "labelSelector": {"matchLabels": {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/role": "gateway"}},
+            "namespaceSelector": {"matchLabels": {"app.kubernetes.io/part-of": "rd-iroha3"}}}}]}}:
+        bad.append(f"gateway: affinity must be exactly one PREFERRED hostname anti-affinity term against role=gateway pods of the rd-iroha3 namespaces: {pod.get('affinity')}")
     sc = pod["securityContext"]
     if not (sc.get("runAsNonRoot") is True and sc.get("runAsUser") == 10001 and sc["seccompProfile"] == {"type": "RuntimeDefault"}):
         bad.append(f"gateway: pod securityContext {sc}")

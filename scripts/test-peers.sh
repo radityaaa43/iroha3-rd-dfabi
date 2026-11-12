@@ -78,5 +78,20 @@ mut "a wildcard namespace selector" 'p["spec"]["egress"][1]["to"][0]["namespaceS
 mut "an empty podSelector in a rule" 'p["spec"]["egress"][3]["to"][0]["podSelector"] = {}'
 mut "an extra port 443 on the P2P rule" 'p["spec"]["egress"][1]["ports"].append({"protocol": "TCP", "port": 443})'
 mut "the other cluster LB replaced by a cluster-internal range" 'p["spec"]["egress"][2]["to"] = [{"ipBlock": {"cidr": "10.200.0.0/16"}}]'
+# R22 MUTANTS of the StatefulSet pod affinity: the anti-affinity must be REQUIRED, hostname, over the rd-iroha3 namespaces
+sts_mut() { # <label> <python statement on the pod spec dict a (pod["spec"]["affinity"]["podAntiAffinity"])>
+  local m; m=$(python3 -I -c '
+import sys, json, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
+for d in docs:
+    if d["kind"] == "StatefulSet":
+        a = d["spec"]["template"]["spec"]["affinity"]["podAntiAffinity"]; exec(sys.argv[1])
+print("\n---\n".join(json.dumps(d) for d in docs))' "$2" <<<"$good")
+  python3 -I scripts/check-peers.py bi $H $CIDR egress:$BANKC_LB <<<"$m" >/dev/null 2>&1 && fail "MUTANT $1 passed the peers checker" || ok "MUTANT: $1 FAILS the peers checker"
+}
+sts_mut "the anti-affinity back to soft (preferred only)" 'a["preferredDuringSchedulingIgnoredDuringExecution"] = [{"weight": 100, "podAffinityTerm": a.pop("requiredDuringSchedulingIgnoredDuringExecution")[0]}]'
+sts_mut "the required term on topologyKey zone instead of hostname" 'a["requiredDuringSchedulingIgnoredDuringExecution"][0]["topologyKey"] = "topology.kubernetes.io/zone"'
+sts_mut "the required term without the namespaceSelector (own namespace only)" 'a["requiredDuringSchedulingIgnoredDuringExecution"][0].pop("namespaceSelector")'
+sts_mut "the required term plus a leftover soft term" 'a["preferredDuringSchedulingIgnoredDuringExecution"] = [{"weight": 1, "podAffinityTerm": a["requiredDuringSchedulingIgnoredDuringExecution"][0]}]'
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"

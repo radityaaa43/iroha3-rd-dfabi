@@ -56,7 +56,10 @@ spec:
       priorityClassName: rd-iroha3-peer # cluster 1 only (deploy/ns/priorityclass.yaml)
       # Keep the 3 GiB peers off two nodes that are full (disk-attach slots, memory) and off each other. A
       # topologySpreadConstraint only counts pods of its own namespace, so the three peers (one per namespace) would not
-      # see each other: soft podAntiAffinity with a namespaceSelector spreads them across the rd-iroha3 namespaces.
+      # see each other: podAntiAffinity with a namespaceSelector spreads them across the rd-iroha3 namespaces.
+      # R22 (co-location, analyst GAP): REQUIRED (was soft): no two peers on one worker (one node loss or compromise = one peer, never two;
+      # 4 validators, f = 1). IgnoredDuringExecution: it never evicts a running peer and an OnDelete StatefulSet does not move one on apply;
+      # it binds when a peer pod is (re)scheduled. If no free worker exists the pod stays Pending (by design: report, never relax by hand).
       # S7 window prerequisite (read-only, per candidate node): disk-attach slots left (cluster-1 slots were full before).
       affinity:
         nodeAffinity:
@@ -67,17 +70,15 @@ spec:
                     operator: NotIn
                     values: [member-16033-node, member-16034-node]
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/part-of: rd-iroha3
-                    rd-iroha3/role: peer
-                namespaceSelector:
-                  matchLabels:
-                    app.kubernetes.io/part-of: rd-iroha3
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: rd-iroha3
+                  rd-iroha3/role: peer
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: rd-iroha3
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
