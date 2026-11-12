@@ -121,8 +121,8 @@ docs = [
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Ingress"],
               "ingress": [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}],
                            "ports": [{"protocol": "TCP", "port": 8091}]}]}},
-    # R17 end step (key-holding pod: the bank seed): ONE narrow Egress policy `driver-egress`, ALWAYS rendered (live D2 shape too): cluster DNS; the Torii (:8080) of
-    # the peers of the SAME cluster (the config [torii] table; bank-c lives on the other cluster and its name does not resolve from cluster 1); and WITH --audit-tls the
+    # R17 end step (key-holding pod: the bank seed): ONE narrow Egress policy `driver-egress`, ALWAYS rendered (live D2 shape too): cluster DNS; the OWN peer's Torii (:8080)
+    # only (every live server route uses client.toml = own Torii; the other parties' [torii] entries are read only by the CLI APS paths); and WITH --audit-tls the
     # gateways on 8443 (same-cluster namespaces by selector; the other cluster's gateways ONLY as the explicit /32 external LB addresses of --remote-gw-cidr).
     {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "driver-egress", "namespace": ns, "labels": labels},
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "driver"}}, "policyTypes": ["Egress"],
@@ -130,8 +130,7 @@ docs = [
                   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
                    "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-                  {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
-                           "podSelector": {"matchLabels": {"rd-iroha3/role": "peer"}}} for q in same_cluster],
+                  {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}],
                    "ports": [{"protocol": "TCP", "port": 8080}]},
               ] + ([{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}},
                              "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}} for q in same_cluster]

@@ -154,9 +154,8 @@ if np:
             and ing[0]["from"] == [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}]):
         bad.append(f"driver-ingress must admit only the gateway pods of the own namespace on TCP 8091: {ing}")
 
-# R17 end step: the key-holding driver gets ONE narrow Egress policy `driver-egress`, ALWAYS (the live D2 shape too). Destinations from the driver config [torii] table (the
-# party's own Torii and the same-cluster peers' Torii on 8080: deploy/driver/render.py [torii]; bank-c is on the other cluster and its name does not resolve from cluster 1),
-# DNS by selector, and WITH --audit-tls the gateways on 8443 (same-cluster namespaces by selector; the other cluster's gateways only as explicit /32 --remote-gw-cidr).
+# R17 end step: the key-holding driver gets ONE narrow Egress policy `driver-egress`, ALWAYS (the live D2 shape too). Destinations: the OWN peer's Torii on 8080 only (every live
+# server route uses client.toml = own Torii; the [torii] table's other parties are read only by the CLI APS paths aps.rs:625/735, not by the driver pod), DNS by selector, and WITH --audit-tls the gateways on 8443 (same-cluster namespaces by selector; the other cluster's gateways only as explicit /32 --remote-gw-cidr).
 eg = by.get(("NetworkPolicy", "driver-egress"))
 if eg is None:
     bad.append("missing NetworkPolicy driver-egress")
@@ -169,7 +168,7 @@ else:
         {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                  "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
          "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-        {"to": [nsel(q, "peer") for q in same], "ports": [{"protocol": "TCP", "port": 8080}]},
+        {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
     ]
     if tlsmode:
         want_eg.append({"to": [nsel(q, "gateway") for q in same] + [{"ipBlock": {"cidr": c}} for c in remote], "ports": [{"protocol": "TCP", "port": 8443}]})
