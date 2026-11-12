@@ -110,6 +110,16 @@ for p in docs:
 print("\n---\n".join(json.dumps(d) for d in docs))' "$3" <<<"$good")
   python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" $([[ $2 == tls ]] && echo tls) <<<"$m" >/dev/null 2>&1 && fail "MUTANT $1 passed the driver checker" || ok "MUTANT: $1 FAILS the driver checker ($2)"
 }
+# MUTANT: client.toml read through the Secret volume (symlink) instead of the subPath mount must FAIL the checker
+good=$("$R" bi "$D" "$P")
+m=$(python3 -I -c '
+import sys, json, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
+for d in docs:
+    if d["kind"] == "Deployment":
+        c = d["spec"]["template"]["spec"]["containers"][0]; c["volumeMounts"] = [x for x in c["volumeMounts"] if x["mountPath"] != "/client/client.toml"]
+print("\n---\n".join(json.dumps(d) for d in docs))' <<<"$good")
+python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" <<<"$m" >/dev/null 2>&1 && fail "MUTANT: no client.toml subPath mount passed" || ok "MUTANT: a driver without the client.toml subPath mount FAILS the checker"
 for mode in plain tls; do
   dmut "an extra destination ipBlock 8.8.8.8/32" $mode 'p["spec"]["egress"].append({"to": [{"ipBlock": {"cidr": "8.8.8.8/32"}}], "ports": [{"protocol": "TCP", "port": 443}]})'
   dmut "a wildcard namespace selector on the Torii rule" $mode 'p["spec"]["egress"][1]["to"][0]["namespaceSelector"] = {}'
