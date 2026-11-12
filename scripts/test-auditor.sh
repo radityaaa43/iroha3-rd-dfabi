@@ -54,6 +54,40 @@ for p in bank-a bank-b; do
   python3 -I scripts/check-auditor.py "$p" "$D" "$H8" "$CHAIN" <<<"$out" >/dev/null 2>&1 && fail "$p: the Secret-model checker accepted a --keys-in-pvc render" || ok "$p: Secret-model checker rejects the PVC render"
   python3 -I scripts/check-auditor.py "$p" "$D" "$H8" "$CHAIN" pvc <<<"$("$R" "$p" "$D" "$P")" >/dev/null 2>&1 && fail "$p: the PVC checker accepted a plain render" || ok "$p: PVC checker rejects the plain render"
 done
+# --gw-tls (analyst ruling P1, auditors reach the 4 gateways ONLY): localhost mTLS envoy sidecar, egress DNS + 4 gateways :8443, NO Torii
+mkdir -p "$P/gateway-ca"; for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
+BC=203.0.113.44
+refuse "--gw-tls without --bank-c-gw-cidr" "bank-c-gw-cidr" bi "$D" "$P" --gw-tls
+refuse "--gw-tls with a private --bank-c-gw-cidr" "public" bi "$D" "$P" --gw-tls --bank-c-gw-cidr 10.0.0.1/32
+refuse "--gw-tls with a wide --bank-c-gw-cidr" "/32" bi "$D" "$P" --gw-tls --bank-c-gw-cidr 203.0.113.0/24
+refuse "--bank-c-gw-cidr without --gw-tls" "usage" bi "$D" "$P" --bank-c-gw-cidr $BC/32
+mkdir "$T/p_ca"; cp "$P/chain_id" "$P/genesis.expected_hash" "$P/peers.json" "$P/accounts.json" "$T/p_ca/"; refuse "--gw-tls without the public server CAs" "server-ca" bi "$D" "$T/p_ca" --gw-tls --bank-c-gw-cidr $BC/32
+for p in bi bank-a bank-b; do
+  out=$("$R" "$p" "$D" "$P" --gw-tls --bank-c-gw-cidr $BC/32 2>&1) || { fail "$p --gw-tls: render failed: $out"; continue; }
+  python3 -I scripts/check-auditor.py "$p" "$D" "$H8" "$CHAIN" gwtls bankc:$BC <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "auditor-gwtls" <<<"$out" || fails=$((fails + 1))
+done
+out=$("$R" bank-a "$D" "$P" --keys-in-pvc --gw-tls --bank-c-gw-cidr $BC/32 2>&1) && python3 -I scripts/check-auditor.py bank-a "$D" "$H8" "$CHAIN" pvc gwtls bankc:$BC <<<"$out" || { fail "bank-a --keys-in-pvc + --gw-tls"; }
+gw_out=$("$R" bank-a "$D" "$P" --gw-tls --bank-c-gw-cidr $BC/32)
+gmut() { # <label> <python statement on docs (dict by (kind,name)) d>
+  python3 -I -c '
+import sys, yaml
+docs = [x for x in yaml.safe_load_all(sys.stdin.read()) if x]
+by = {(x["kind"], x["metadata"]["name"]): x for x in docs}
+exec(sys.argv[1])
+print(yaml.safe_dump_all(docs))' "$2" <<<"$gw_out" | python3 -I scripts/check-auditor.py bank-a "$D" "$H8" "$CHAIN" gwtls bankc:$BC >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the gw-tls checker"
+}
+EV='yaml.safe_load(by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"])'
+gmut "a sidecar listener on 0.0.0.0" 'e = '"$EV"'; e["static_resources"]["listeners"][0]["address"]["socket_address"]["address"] = "0.0.0.0"; by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"] = yaml.safe_dump(e)'
+gmut "an upstream with system roots (no trusted_ca)" 'e = '"$EV"'; e["static_resources"]["clusters"][0]["transport_socket"]["typed_config"]["common_tls_context"]["validation_context"].pop("trusted_ca"); by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"] = yaml.safe_dump(e)'
+gmut "skip-verify (trust_chain_verification ACCEPT_UNTRUSTED)" 'e = '"$EV"'; e["static_resources"]["clusters"][1]["transport_socket"]["typed_config"]["common_tls_context"]["validation_context"]["trust_chain_verification"] = "ACCEPT_UNTRUSTED"; by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"] = yaml.safe_dump(e)'
+gmut "no SAN match on an upstream" 'e = '"$EV"'; e["static_resources"]["clusters"][2]["transport_socket"]["typed_config"]["common_tls_context"]["validation_context"].pop("match_typed_subject_alt_names"); by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"] = yaml.safe_dump(e)'
+gmut "an admin interface on the sidecar" 'e = '"$EV"'; e["admin"] = {"address": {"socket_address": {"address": "127.0.0.1", "port_value": 9901}}}; by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"] = yaml.safe_dump(e)'
+gmut "Torii 8080 back in the auditor egress" 'by[("NetworkPolicy","auditor-egress")]["spec"]["egress"].append({"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": "bank-a"}}}], "ports": [{"protocol": "TCP", "port": 8080}]})'
+gmut "an extra ipBlock in the auditor egress" 'by[("NetworkPolicy","auditor-egress")]["spec"]["egress"][1]["to"].append({"ipBlock": {"cidr": "8.8.8.8/32"}})'
+gmut "the client key mounted into the auditor container" 'by[("Deployment","auditor")]["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].append({"name": "client-cert", "mountPath": "/client", "readOnly": True})'
+gmut "the sidecar image by tag" 'by[("Deployment","auditor")]["spec"]["template"]["spec"]["containers"][1]["image"] = "envoyproxy/envoy:v1.30.0"'
+gmut "a torii URL on a non-loopback host" 'import tomllib; t = by[("ConfigMap","auditor-config")]["data"]; t["rd-dfabi.toml"] = t["rd-dfabi.toml"].replace("http://127.0.0.1:18102/", "http://bank-a-0.bank-a.rd-iroha3-bank-a.svc.cluster.local:8080/")'
 # MUTANTS of the --keys-in-pvc render: each must make the PVC checker FAIL
 pvc_out=$("$R" bank-a "$D" "$P" --keys-in-pvc)
 pmut() { # <label> <python statement on the Deployment pod spec dict ps>
