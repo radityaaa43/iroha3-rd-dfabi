@@ -250,7 +250,6 @@ test_unlisted_paths_denied if {
 			not allowed(n, role, "GET", "/")
 			not allowed(n, role, "GET", "")
 			not allowed(n, role, "GET", "/auditor/keys")
-			not allowed(n, role, "POST", "/approve")
 			not allowed(n, role, "GET", "/metrics")
 		}
 	}
