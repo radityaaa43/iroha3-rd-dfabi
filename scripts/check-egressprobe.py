@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver | peer <remote ip>... | gateway | lb <target ip>...]
+"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver | peer <remote ip>... | gateway | lb <target ip>... | auditor <bank-c gateway-lb ip>]
 (driver = the --role driver Pod only; peer = the --role peer Pod only, labelled ONLY rd-iroha3/role=peer, with the given remote P2P /32 addresses;
-gateway = the --role gateway Pod only, labelled ONLY role=gateway + app.kubernetes.io/name=gateway; lb = the --role lb Pod + its own egress policy: ONLY the target LB /32 on 8443)"""
+gateway = the --role gateway Pod only, labelled ONLY role=gateway + app.kubernetes.io/name=gateway; lb = the --role lb Pod + its own egress policy: ONLY the target LB /32 on 8443;
+auditor = the --role auditor Pod only, labelled EXACTLY the auditor pod labels role=auditor + rd/egress-locked=true, selected by the REAL auditor-egress)"""
 import json
 import sys
 
@@ -11,8 +12,8 @@ party, digest = sys.argv[1:3]
 role = sys.argv[3] if len(sys.argv) > 3 else ""
 remotes = sys.argv[4:]
 dmin = role == "driver-min"  # label ONLY rd-iroha3/role=driver: admitted by peers-torii/driver-egress, matches NO Service/Deployment selector
-drole, prole, grole, lrole = role in ("driver", "driver-min"), role == "peer", role == "gateway", role == "lb"
-pname = "egress-probe-driver-min" if dmin else "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else "lb-probe" if lrole else "egress-probe"
+drole, prole, grole, lrole, arole = role in ("driver", "driver-min"), role == "peer", role == "gateway", role == "lb", role == "auditor"
+pname = "egress-probe-driver-min" if dmin else "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else "egress-probe-auditor" if arole else "lb-probe" if lrole else "egress-probe"
 C1 = ("bi", "bank-a", "bank-b")
 same = C1 if party in C1 else ("bank-c",)
 foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
@@ -20,7 +21,7 @@ ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 bad = []
-want = {("Pod", pname)} if (drole or prole or grole) else {("Pod", "lb-probe"), ("NetworkPolicy", "lb-probe-egress")} if lrole else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
+want = {("Pod", pname)} if (drole or prole or grole or arole) else {("Pod", "lb-probe"), ("NetworkPolicy", "lb-probe-egress")} if lrole else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
 if set(by) != want or len(docs) != len(want):
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)}")
 for (k, n), d in by.items():
@@ -42,9 +43,10 @@ if pod:
                   (lab == {"rd-iroha3/role": "peer"}) if prole else  # ONLY role=peer: no part-of/party, so no StatefulSet/Service selector (all need part-of+party+role) can match it
                   (lab == {"rd-iroha3/role": "gateway", "app.kubernetes.io/name": "gateway"}) if grole else  # no part-of/party: the gateway Service/Deployment selectors cannot match it
                   (lab == {"rd-iroha3/role": "lb-probe"}) if lrole else
+                  (lab == {"rd-iroha3/role": "auditor", "rd/egress-locked": "true"}) if arole else  # EXACTLY the auditor pod labels (no part-of/party: no Service/Deployment selector matches it)
                   (lab.get("rd-iroha3/role") == "egress-probe" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party),
         "no container ports": not c.get("ports"),
-        "deadline 1800 s": s.get("activeDeadlineSeconds") == 1800 if (grole or lrole) else True,
+        "deadline 1800 s": s.get("activeDeadlineSeconds") == 1800 if (grole or lrole or arole) else True,
         "digest-pinned driver image": c["image"] == f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}",
         "imagePullSecrets ghcr-pull": s.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "imagePullPolicy Always": c.get("imagePullPolicy") == "Always",
@@ -76,6 +78,10 @@ if pod:
         need += (f"{foreign}-0.{foreign}.rd-iroha3-{foreign}.svc.cluster.local",) if foreign else ()
         if "GET /status" in script:
             bad.append("gateway-role probe must not read /status")
+    elif arole:  # auditor-egress controls: positive = the 3 same-cluster gateways :8443 (by name) + bank-c's gateway-lb /32 :8443; negative = own Torii :8080, internet/apiserver/ghcr
+        need = base + tuple(f"gateway.rd-iroha3-{q}.svc.cluster.local" for q in ("bi", "bank-a", "bank-b")) + ("for r in " + " ".join(remotes), "8443", "8080")
+        if "GET /status" in script:
+            bad.append("auditor-role probe must not read /status")
     elif prole:  # NEW connections: every same-cluster peer on 1337 and 8080, every remote LB /32 on 1337 (positive); foreign driver (negative, also ingress-denied)
         need = base + tuple(f"{q}-0.{q}.rd-iroha3-{q}.svc.cluster.local" for q in same) + ("for r in " + " ".join(remotes), "1337", "8080")
         need += (f"driver.rd-iroha3-{foreign}.svc.cluster.local",) if foreign else ()
@@ -90,7 +96,7 @@ if pod:
     for n in need:
         if n not in script:
             bad.append(f"probe loop lacks {n!r}")
-    if (prole or lrole) and not remotes:
+    if (prole or lrole or arole) and not remotes:
         bad.append("peer/lb-role check needs at least one target ip argument")
 np = by.get(("NetworkPolicy", "lb-probe-egress" if lrole else "egress-probe-egress"))
 if np and lrole:
@@ -100,7 +106,7 @@ if np and lrole:
         bad.append(f"NetworkPolicy lb-probe-egress: selector role=lb-probe, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
     if sp.get("egress") != want_eg:
         bad.append(f"NetworkPolicy lb-probe-egress must allow ONLY the target LB /32(s) on TCP 8443 (no DNS, nothing else): {json.dumps(sp.get('egress'))}")
-elif np and not (drole or prole or grole):
+elif np and not (drole or prole or grole or arole):
     sp = np["spec"]
     c1 = ("bi", "bank-a", "bank-b")
     gw_ns = c1 if party in c1 else ("bank-c",)

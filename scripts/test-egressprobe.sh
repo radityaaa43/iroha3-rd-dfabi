@@ -51,6 +51,26 @@ for p in bi bank-a bank-b bank-c; do
   python3 -I scripts/check-egressprobe.py "$p" "$D" peer "${rem[@]}" <<<"$out" || fails=$((fails + 1))
   python3 -I scripts/check-netpol-form.py "egressprobe-peer" <<<"$out" || fails=$((fails + 1))
 done
+# --role auditor: positive/negative control of the REAL auditor-egress (S13.2): ONLY a Pod labelled EXACTLY like the auditor (role=auditor + rd/egress-locked=true), bank-c's gateway-lb /32
+for p in bi bank-a bank-b; do
+  out=$("$R" "$p" "$D" --role auditor --bank-c-gw 203.0.113.44/32 2>&1) || { fail "$p --role auditor: render failed: $out"; continue; }
+  python3 -I scripts/check-egressprobe.py "$p" "$D" auditor 203.0.113.44 <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "egressprobe-auditor" <<<"$out" || fails=$((fails + 1))
+done
+aud_out=$("$R" bi "$D" --role auditor --bank-c-gw 203.0.113.44/32 2>/dev/null)
+amutant() { # <label> <python on the Pod doc d>
+  python3 -I -c '
+import sys, yaml
+d = yaml.safe_load(sys.stdin.read()); exec(sys.argv[1]); print(yaml.safe_dump(d))' "$2" <<<"$aud_out" | python3 -I scripts/check-egressprobe.py bi "$D" auditor 203.0.113.44 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the auditor-role checker"
+}
+amutant "an auditor-role probe without rd/egress-locked" 'd["metadata"]["labels"].pop("rd/egress-locked")'
+amutant "an auditor-role probe with the party label (Service/Deployment selectors would match)" 'd["metadata"]["labels"]["rd-iroha3/party"] = "bi"'
+amutant "an auditor-role probe with a service-account token" 'd["spec"]["automountServiceAccountToken"] = True'
+refuse "--role auditor without --bank-c-gw" "usage" bi "$D" --role auditor
+refuse "--role auditor for bank-c (no auditor there)" "usage" bank-c "$D" --role auditor --bank-c-gw 203.0.113.44/32
+refuse "--role auditor with a private --bank-c-gw" "public" bi "$D" --role auditor --bank-c-gw 10.0.0.1/32
+refuse "--role auditor with a wide --bank-c-gw" "/32" bi "$D" --role auditor --bank-c-gw 203.0.113.0/24
+refuse "--bank-c-gw without --role auditor" "usage" bi "$D" --bank-c-gw 203.0.113.44/32
 # MUTANTS of the peer-role Pod: any extra label (party/part-of => matches the Service/StatefulSet selectors) or a container port must FAIL the checker
 peer_out=$("$R" bi "$D" --role peer --remote-p2p 43.106.70.123/32)
 mutant() { # <label> <python statement on pod d>

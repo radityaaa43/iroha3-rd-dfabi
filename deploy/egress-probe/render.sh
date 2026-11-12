@@ -17,6 +17,8 @@
 # the LB/ACL functional proof (TCP connect from the admitted source = OPEN; never TLS).
 # --role peer --remote-p2p <ip>/32 ...: ONLY a Pod labelled rd-iroha3/role=peer and NOTHING else (no part-of/party: no StatefulSet, Service or PDB selector matches it), selected by peers-egress; it opens NEW TCP
 # connections to the same-cluster peers (1337, 8080) and to each remote LB /32 (1337) = positive control, and tries the internet/apiserver/ghcr/foreign driver = negative control.
+# --role auditor --bank-c-gw <public ipv4>/32 (bi|bank-a|bank-b): ONLY a Pod labelled EXACTLY like the auditor (rd-iroha3/role=auditor + rd/egress-locked=true, no part-of/party: no Service/Deployment selector
+# matches it), selected by the REAL auditor-egress (S13.2): positive = the 3 cluster-1 gateways :8443 by name + bank-c's gateway-lb /32 :8443; negative = own Torii :8080, internet/apiserver/ghcr. Deadline 1800 s.
 # Create the Pod first (baseline: everything OPEN), then the policy, then read the log: the holes turn to TIMEOUT. Delete the Pod after; keep or delete the policy per the GO.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -26,8 +28,8 @@ party=$1 digest=$2; shift 2
 role="" remotes=() kind=""
 while (( $# )); do
   case $1 in
-    --role) [[ ${2:-} == driver || ${2:-} == driver-min || ${2:-} == peer || ${2:-} == gateway || ${2:-} == lb ]] || usage; role=$2; shift 2 ;;
-    --remote-p2p | --lb-target)
+    --role) [[ ${2:-} == driver || ${2:-} == driver-min || ${2:-} == peer || ${2:-} == gateway || ${2:-} == lb || ${2:-} == auditor ]] || usage; role=$2; shift 2 ;;
+    --remote-p2p | --lb-target | --bank-c-gw)
       [[ ${2:-} =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || { echo "render.sh: $1 must be a single IPv4 /32 (got '${2:-}')" >&2; exit 2; }
       [[ $2 =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|0\.) ]] && { echo "render.sh: $1 must be a public address, not $2" >&2; exit 2; }
       k=${1#--}; [[ -z $kind || $kind == "$k" ]] || usage; kind=$k
@@ -41,6 +43,7 @@ case $party in bi | bank-a | bank-b | bank-c) ;; *) usage ;; esac
 case $role in
   peer) [[ $kind == remote-p2p ]] || usage ;;
   lb) [[ $kind == lb-target ]] || usage ;;
+  auditor) [[ $kind == bank-c-gw && ${#remotes[@]} -eq 1 && $party != bank-c ]] || usage ;;
   *) [[ -z $kind ]] || usage ;;
 esac
 exec python3 -I "$here/render.py" "$party" "$digest" "${role:-default}" "${remotes[@]}"
