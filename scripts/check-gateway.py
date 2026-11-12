@@ -78,7 +78,7 @@ if cm:
                 bad.append("envoy: want one virtual host for *")
             else:
                 routes = vh[0]["routes"]
-                driver_paths = ["/settle-grant", "/dvp-native"] + (["/mint"] if party == "bi" else [])
+                driver_paths = ["/settle-grant", "/dvp-native", "/transfer"] + (["/mint"] if party == "bi" else [])
                 # S12/S13 transport A: the party's OWN auditor is reached through its gateway (/keys, /approve; /records on BI only)
                 auditor_exact = ["/keys", "/approve"] + (["/records"] if party == "bi" else [])
                 get_only = [{"name": ":method", "string_match": {"exact": "GET"}}]

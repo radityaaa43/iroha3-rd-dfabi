@@ -31,7 +31,7 @@ per_route = {AUTHZ: {"@type": "type.googleapis.com/envoy.extensions.filters.http
                      "check_settings": {"context_extensions": ctx}}}
 # Driver routes wait for `Applied` (client.toml status_timeout_ms 300000), so the route timeout is above 300 s.
 # Exact driver paths (the code's names: driver/src/server.rs, mint.rs); `/mint` exists on the BI gateway only (BI driver).
-driver_paths = ["/settle-grant", "/dvp-native"] + (["/mint"] if party == "bi" else [])
+driver_paths = ["/settle-grant", "/dvp-native", "/transfer"] + (["/mint"] if party == "bi" else [])
 routes = [{"match": {"path": p}, "route": {"cluster": "driver", "timeout": "330s"}, "typed_per_filter_config": per_route}
           for p in driver_paths]
 # Window B reads served by the party's OWN driver (driver/src/server.rs): exact path + GET only, anything else falls to Torii.
