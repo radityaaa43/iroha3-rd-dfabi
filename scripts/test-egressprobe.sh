@@ -71,6 +71,26 @@ refuse "--role auditor for bank-c (no auditor there)" "usage" bank-c "$D" --role
 refuse "--role auditor with a private --bank-c-gw" "public" bi "$D" --role auditor --bank-c-gw 10.0.0.1/32
 refuse "--role auditor with a wide --bank-c-gw" "/32" bi "$D" --role auditor --bank-c-gw 203.0.113.0/24
 refuse "--bank-c-gw without --role auditor" "usage" bi "$D" --bank-c-gw 203.0.113.44/32
+# --role auditor-api --api-endpoint <ip>/32 ...: positive/negative control of the REAL auditor-client-api-egress (keygen/put Jobs): Pod labelled EXACTLY like those Job pods
+for p in bi bank-a bank-b; do
+  out=$("$R" "$p" "$D" --role auditor-api --api-endpoint 172.24.11.240/32 --api-endpoint 172.24.40.81/32 2>&1) || { fail "$p --role auditor-api: render failed: $out"; continue; }
+  python3 -I scripts/check-egressprobe.py "$p" "$D" auditor-api 172.24.11.240 172.24.40.81 <<<"$out" || fails=$((fails + 1))
+done
+kp_out=$("$R" bi "$D" --role auditor-api --api-endpoint 172.24.11.240/32 --api-endpoint 172.24.40.81/32 2>/dev/null)
+kmutant() { # <label> <python on the Pod doc d>
+  python3 -I -c '
+import sys, yaml
+d = yaml.safe_load(sys.stdin.read()); exec(sys.argv[1]); print(yaml.safe_dump(d))' "$2" <<<"$kp_out" | python3 -I scripts/check-egressprobe.py bi "$D" auditor-api 172.24.11.240 172.24.40.81 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the auditor-api-role checker"
+}
+kmutant "an auditor-api probe without rd/egress-locked" 'd["metadata"]["labels"].pop("rd/egress-locked")'
+kmutant "an auditor-api probe without the party label (not the exact Job labels)" 'd["metadata"]["labels"].pop("rd-iroha3/party")'
+kmutant "an auditor-api probe with a service-account token" 'd["spec"]["automountServiceAccountToken"] = True'
+kmutant "an auditor-api probe with a serviceAccountName" 'd["spec"]["serviceAccountName"] = "auditor-client-api"'
+refuse "--role auditor-api without --api-endpoint" "usage" bi "$D" --role auditor-api
+refuse "--role auditor-api for bank-c (no auditor there)" "usage" bank-c "$D" --role auditor-api --api-endpoint 172.28.18.47/32
+refuse "--role auditor-api with a wide --api-endpoint" "/32" bi "$D" --role auditor-api --api-endpoint 172.24.0.0/16
+refuse "--api-endpoint without --role auditor-api" "usage" bi "$D" --api-endpoint 172.24.11.240/32
+refuse "--role auditor-api with the ClusterIP form" "ClusterIP" bi "$D" --role auditor-api --api-endpoint 10.200.0.1/32:443
 # MUTANTS of the peer-role Pod: any extra label (party/part-of => matches the Service/StatefulSet selectors) or a container port must FAIL the checker
 peer_out=$("$R" bi "$D" --role peer --remote-p2p 43.106.70.123/32)
 mutant() { # <label> <python statement on pod d>
