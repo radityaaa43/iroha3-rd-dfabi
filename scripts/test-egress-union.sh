@@ -39,7 +39,7 @@ for p in bi bank-a bank-b; do
   python3 -I "$C" "$p" "${roles[@]}" <<<"$out" || fails=$((fails + 1))
 done
 # bank-c (cluster 2): peers + driver + gateway only (no auditor/pool-init there)
-out=$( { deploy/peers/render.sh --cluster 2 --p2p-egress-cidr 198.51.100.7/32 bank-c $H $CIDR; echo "---"; deploy/driver/render.sh bank-c "$D" "$P" --audit-tls; echo "---"; deploy/gateway/render.sh bank-c --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml" --cluster 2 --lb-acl acl-x --lb-range 203.0.113.9/32; } 2>&1) || fail "bank-c: a render failed: ${out:0:300}"
+out=$( { deploy/peers/render.sh --cluster 2 --p2p-egress-cidr 198.51.100.7/32 bank-c $H $CIDR; echo "---"; deploy/driver/render.sh bank-c "$D" "$P" --audit-tls --remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22; echo "---"; deploy/gateway/render.sh bank-c --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml" --cluster 2 --lb-acl acl-x --lb-range 203.0.113.9/32; } 2>&1) || fail "bank-c: a render failed: ${out:0:300}"
 python3 -I "$C" bank-c peer=peers-egress driver=driver-egress gateway=gateway-egress <<<"$out" || fails=$((fails + 1))
 # MUTANTS on the bi namespace
 good=$(ns_render bi 2>&1)

@@ -40,17 +40,39 @@ done
 # --audit-tls: [audit] 2-of-3 through the gateways, [tls], client-cert Secret volume, public server CAs ConfigMap
 mkdir -p "$P/gateway-ca"
 for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
-for p in bi bank-a bank-b bank-c; do
+for p in bi bank-a bank-b; do  # cluster 1: the three auditors are in the same cluster (names resolve); bank-c needs --remote-gw (below)
   out=$("$R" "$p" "$D" "$P" --audit-tls 2>&1) || { fail "$p --audit-tls: render failed: $out"; continue; }
   python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls <<<"$out" || fails=$((fails + 1))
   python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
 done
 # --audit-tls with the gateways of the OTHER cluster as explicit /32 ipBlocks (driver-egress)
-for p in bi bank-a bank-b bank-c; do
+for p in bi bank-a bank-b; do
   out=$("$R" "$p" "$D" "$P" --audit-tls --remote-gw-cidr 203.0.113.10/32 --remote-gw-cidr 203.0.113.11/32 2>&1) || { fail "$p --remote-gw-cidr: render failed: $out"; continue; }
   python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls 203.0.113.10/32 203.0.113.11/32 <<<"$out" || fails=$((fails + 1))
   python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
 done
+# bank-c (cluster 2) reaches the three cluster-1 auditors only by their external gateway LB addresses: --remote-gw <party>=<ip> emits [tls.resolve] (host -> ip:8443) AND the same ip as a /32 in driver-egress
+GW=(--remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22)
+GWT=(gw:bi=203.0.113.20 gw:bank-a=203.0.113.21 gw:bank-b=203.0.113.22)
+out=$("$R" bank-c "$D" "$P" --audit-tls "${GW[@]}" 2>&1) || fail "bank-c --remote-gw: render failed: $out"
+python3 -I scripts/check-driver.py bank-c "$D" "$H8" "$CHAIN" tls "${GWT[@]}" <<<"$out" || fails=$((fails + 1))
+python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
+out2=$("$R" bank-c "$D" "$P" --audit-tls --remote-gw-cidr 203.0.113.10/32 "${GW[@]}" 2>&1) || fail "bank-c --remote-gw + --remote-gw-cidr: render failed: $out2"
+python3 -I scripts/check-driver.py bank-c "$D" "$H8" "$CHAIN" tls 203.0.113.10/32 "${GWT[@]}" <<<"$out2" || fails=$((fails + 1))
+refuse "bank-c --audit-tls without --remote-gw" "remote-gw" bank-c "$D" "$P" --audit-tls
+refuse "bank-c --audit-tls with only --remote-gw-cidr" "remote-gw" bank-c "$D" "$P" --audit-tls --remote-gw-cidr 203.0.113.10/32
+refuse "bank-c --remote-gw missing bank-b" "bank-b" bank-c "$D" "$P" --audit-tls --remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21
+refuse "a duplicated --remote-gw party" "twice" bank-c "$D" "$P" --audit-tls "${GW[@]}" --remote-gw bi=203.0.113.23
+refuse "--remote-gw for the auditor-less bank-c itself" "bi, bank-a or bank-b" bank-c "$D" "$P" --audit-tls "${GW[@]}" --remote-gw bank-c=203.0.113.24
+refuse "--remote-gw for a cluster-1 driver" "bank-c" bi "$D" "$P" --audit-tls "${GW[@]}"
+refuse "--remote-gw without --audit-tls" "usage" bank-c "$D" "$P" "${GW[@]}"
+refuse "--remote-gw with a private address" "public" bank-c "$D" "$P" --audit-tls --remote-gw bi=10.0.0.5 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22
+refuse "--remote-gw with a CIDR instead of an address" "ipv4" bank-c "$D" "$P" --audit-tls --remote-gw bi=203.0.113.20/32 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22
+refuse "--remote-gw without a party" "must be" bank-c "$D" "$P" --audit-tls --remote-gw 203.0.113.20
+# MUTANTS of the bank-c render: each must FAIL the checker
+python3 -I scripts/check-driver.py bank-c "$D" "$H8" "$CHAIN" tls "${GWT[@]}" <<<"${out//203.0.113.21:8443/203.0.113.99:8443}" >/dev/null 2>&1 && fail "MUTANT: a wrong resolve address passed" || ok "MUTANT: a wrong [tls.resolve] address FAILS the checker"
+python3 -I scripts/check-driver.py bank-c "$D" "$H8" "$CHAIN" tls "${GWT[@]}" <<<"$(python3 -I -c 'import sys; sys.stdout.write(sys.stdin.read().replace("\\n\\\"gateway.rd-iroha3-bank-b.svc.cluster.local\\\" = \\\"203.0.113.22:8443\\\"", ""))' <<<"$out")" >/dev/null 2>&1 && fail "MUTANT: a missing resolve entry passed" || ok "MUTANT: a missing [tls.resolve] entry FAILS the checker"
+python3 -I scripts/check-driver.py bank-c "$D" "$H8" "$CHAIN" tls <<<"$out" >/dev/null 2>&1 && fail "MUTANT: bank-c without gw tokens passed" || ok "MUTANT: a bank-c render checked without --remote-gw FAILS the checker"
 refuse "a remote gateway CIDR that is not a /32" "/32" bi "$D" "$P" --audit-tls --remote-gw-cidr 10.0.0.0/8
 refuse "a remote gateway CIDR without a mask" "/32" bi "$D" "$P" --audit-tls --remote-gw-cidr 203.0.113.10
 refuse "--remote-gw-cidr without --audit-tls" "usage" bi "$D" "$P" --remote-gw-cidr 203.0.113.10/32

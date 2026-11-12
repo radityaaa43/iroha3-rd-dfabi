@@ -7,7 +7,10 @@ import tomllib
 party, digest, pub, network = sys.argv[1:5]
 audit_tls = len(sys.argv) > 5 and sys.argv[5] == "--audit-tls"
 mint = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] else ""  # "<max_rd>:<max_dfabi>" (BI only; render.sh validates)
-remote_gw = sys.argv[7:] if audit_tls else []
+extra = sys.argv[7:] if audit_tls else []
+gw_ip = dict(a.split("=", 1) for a in extra if "=" in a)  # bank-c only (render.sh): cluster-1 party -> external gateway-lb ip
+# --remote-gw-cidr values first, then the /32s derived from --remote-gw in party order (the same ip feeds [tls.resolve] below)
+remote_gw = [a for a in extra if "=" not in a] + [f"{gw_ip[q]}/32" for q in ("bi", "bank-a", "bank-b") if q in gw_ip]
 same_cluster = ("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",)
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
@@ -66,6 +69,8 @@ toml = "\n".join(
             'client_cert = "/tls/client/tls.crt"',
             'client_key = "/tls/client/tls.key"',
             'server_ca_dir = "/tls/cas"',
+            *(["", "# cluster 2 cannot resolve the cluster-1 gateway names: host -> ip:port (node-build tls_http.rs:53-55); the leaf SAN still matches the host",
+               "[tls.resolve]", *[f'"gateway.rd-iroha3-{q}.svc.cluster.local" = "{gw_ip[q]}:8443"' for q in ("bi", "bank-a", "bank-b")]] if gw_ip else []),
             "",
         ]
         if audit_tls
