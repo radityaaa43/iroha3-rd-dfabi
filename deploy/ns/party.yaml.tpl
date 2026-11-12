@@ -28,7 +28,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: rd-iroha3
 ---
-# The party's own deployer. Verbs follow deploy/runner/rbac.yaml:12-14 minus jobs and pods/exec; Secrets can be
+# The party's own deployer. Verbs follow the removed deploy/runner Role (see git history) minus jobs and pods/exec; Secrets can be
 # written but not read (create, update, patch), so one party cannot read another's keys through this role.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

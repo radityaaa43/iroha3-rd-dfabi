@@ -17,3 +17,5 @@ Target: namespace `iroha3` di cluster ACK, deploy lewat GitHub Actions dengan ru
 > kubeconfig cluster dibuat atau disimpan di luar repo. Repo ini hanya berisi artefak publik.
 
 Status: PoC, bukan klaim produksi. APS di upstream masih "disabled by default, not yet production-qualified".
+
+> Catatan: `deploy/runner` (self-hosted runner di dalam cluster, ServiceAccount dengan `pods/exec` dan baca Secret di namespace lama `iroha3`) sudah DIHAPUS dari repo ini. Semua workflow memakai runner GitHub-hosted; `scripts/check-rbac-exec.py` (dijalankan oleh `scripts/test-rbac-exec.sh` di CI) menolak Role mana pun yang memberi `pods/exec|attach|portforward`, resource `*`, atau get/list/watch Secret tanpa `resourceNames`.
