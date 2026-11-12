@@ -63,6 +63,20 @@ amutant() { # <label> <python on the Pod doc d>
 import sys, yaml
 d = yaml.safe_load(sys.stdin.read()); exec(sys.argv[1]); print(yaml.safe_dump(d))' "$2" <<<"$aud_out" | python3 -I scripts/check-egressprobe.py bi "$D" auditor 203.0.113.44 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the auditor-role checker"
 }
+# --role auditor-control: the CONTROL of the auditor probe (same destinations; labelled role=auditor-control only, selected by NO egress policy: must be OPEN where the policy blocks)
+for p in bi bank-a bank-b; do
+  out=$("$R" "$p" "$D" --role auditor-control --bank-c-gw 203.0.113.44/32 2>&1) || { fail "$p --role auditor-control: render failed: $out"; continue; }
+  python3 -I scripts/check-egressprobe.py "$p" "$D" auditor-control 203.0.113.44 <<<"$out" || fails=$((fails + 1))
+done
+ctl_out=$("$R" bi "$D" --role auditor-control --bank-c-gw 203.0.113.44/32 2>/dev/null)
+cmutant() { python3 -I -c '
+import sys, yaml
+d = yaml.safe_load(sys.stdin.read()); exec(sys.argv[1]); print(yaml.safe_dump(d))' "$2" <<<"$ctl_out" | python3 -I scripts/check-egressprobe.py bi "$D" auditor-control 203.0.113.44 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the auditor-control checker"; }
+cmutant "a control probe that carries rd/egress-locked (the real policy would select it)" 'd["metadata"]["labels"]["rd/egress-locked"] = "true"'
+cmutant "a control probe labelled role=auditor (the real policy would select it)" 'd["metadata"]["labels"]["rd-iroha3/role"] = "auditor"'
+cmutant "a control probe with an SA token" 'd["spec"]["automountServiceAccountToken"] = True'
+refuse "--role auditor-control without --bank-c-gw" "usage" bi "$D" --role auditor-control
+refuse "--role auditor-control for bank-c" "usage" bank-c "$D" --role auditor-control --bank-c-gw 203.0.113.44/32
 amutant "an auditor-role probe without rd/egress-locked" 'd["metadata"]["labels"].pop("rd/egress-locked")'
 amutant "an auditor-role probe with the party label (Service/Deployment selectors would match)" 'd["metadata"]["labels"]["rd-iroha3/party"] = "bi"'
 amutant "an auditor-role probe with a service-account token" 'd["spec"]["automountServiceAccountToken"] = True'

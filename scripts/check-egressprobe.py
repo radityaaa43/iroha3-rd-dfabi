@@ -13,9 +13,10 @@ party, digest = sys.argv[1:3]
 role = sys.argv[3] if len(sys.argv) > 3 else ""
 remotes = sys.argv[4:]
 dmin = role == "driver-min"  # label ONLY rd-iroha3/role=driver: admitted by peers-torii/driver-egress, matches NO Service/Deployment selector
-drole, prole, grole, lrole, arole = role in ("driver", "driver-min"), role == "peer", role == "gateway", role == "lb", role == "auditor"
+drole, prole, grole, lrole, arole = role in ("driver", "driver-min"), role == "peer", role == "gateway", role == "lb", role in ("auditor", "auditor-control")
+ctl = role == "auditor-control"  # CONTROL of the auditor probe: same destinations, labels NOT selected by any egress policy (must be OPEN where the policy blocks)
 krole = role == "auditor-api"  # exact labels of the keygen/put Job pods
-pname = "egress-probe-driver-min" if dmin else "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else "egress-probe-auditor" if arole else "egress-probe-auditor-api" if krole else "lb-probe" if lrole else "egress-probe"
+pname = "egress-probe-driver-min" if dmin else "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else ("egress-probe-auditor-control" if ctl else "egress-probe-auditor") if arole else "egress-probe-auditor-api" if krole else "lb-probe" if lrole else "egress-probe"
 C1 = ("bi", "bank-a", "bank-b")
 same = C1 if party in C1 else ("bank-c",)
 foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
@@ -46,6 +47,7 @@ if pod:
                   (lab == {"rd-iroha3/role": "gateway", "app.kubernetes.io/name": "gateway"}) if grole else  # no part-of/party: the gateway Service/Deployment selectors cannot match it
                   (lab == {"rd-iroha3/role": "lb-probe"}) if lrole else
                   (lab == {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party, "rd-iroha3/role": "auditor-client-api", "rd/egress-locked": "true"}) if krole else
+                  (lab == {"rd-iroha3/role": "auditor-control"}) if ctl else  # selected by NO egress policy of the namespace (no rd/egress-locked either)
                   (lab == {"rd-iroha3/role": "auditor", "rd/egress-locked": "true"}) if arole else  # EXACTLY the auditor pod labels (no part-of/party: no Service/Deployment selector matches it)
                   (lab.get("rd-iroha3/role") == "egress-probe" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party),
         "no container ports": not c.get("ports"),
