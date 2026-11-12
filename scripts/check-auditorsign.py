@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Check the rendered auditor-client-sign manifests on stdin. Usage: check-auditorsign.py <party> <digest> <csr-file>"""
+"""Check the rendered auditor-client-sign manifests on stdin. Usage: check-auditorsign.py sign <party> <digest> <csr-file>  (stage sign only; keygen/put: check-auditorapi.py)"""
 import json
 import sys
 
 import yaml
 
-party, digest, csr_file = sys.argv[1:4]
+assert sys.argv[1] == "sign"
+party, digest, csr_file = sys.argv[2:5]
 ns = f"rd-iroha3-{party}"
 csr = open(csr_file).read()
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
