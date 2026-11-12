@@ -51,11 +51,12 @@ if sts:
             and sorted(e.get("values", [])) == ["member-16033-node", "member-16034-node"]
             for t in pod.get("affinity", {}).get("nodeAffinity", {}).get("requiredDuringSchedulingIgnoredDuringExecution", {}).get("nodeSelectorTerms", [])
             for e in t.get("matchExpressions", [])),
-        "soft anti-affinity across rd-iroha3 namespaces": any(
-            t.get("podAffinityTerm", {}).get("topologyKey") == "kubernetes.io/hostname"
-            and t["podAffinityTerm"].get("labelSelector", {}).get("matchLabels") == {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/role": "peer"}
-            and t["podAffinityTerm"].get("namespaceSelector", {}).get("matchLabels") == {"app.kubernetes.io/part-of": "rd-iroha3"}
-            for t in pod.get("affinity", {}).get("podAntiAffinity", {}).get("preferredDuringSchedulingIgnoredDuringExecution", [])),
+        # R22 (co-location): REQUIRED, not soft: two peers (any party of the cluster) never share a worker; the term covers the rd-iroha3 namespaces by label
+        "REQUIRED anti-affinity across rd-iroha3 namespaces (hostname)": pod.get("affinity", {}).get("podAntiAffinity", {}).get("requiredDuringSchedulingIgnoredDuringExecution", []) == [{
+            "topologyKey": "kubernetes.io/hostname",
+            "labelSelector": {"matchLabels": {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/role": "peer"}},
+            "namespaceSelector": {"matchLabels": {"app.kubernetes.io/part-of": "rd-iroha3"}}}],
+        "no soft peer anti-affinity left (required replaces it)": "preferredDuringSchedulingIgnoredDuringExecution" not in pod.get("affinity", {}).get("podAntiAffinity", {}),
         "no token": pod["automountServiceAccountToken"] is False,
         "role label": s["template"]["metadata"]["labels"].get("rd-iroha3/role") == "peer"
         and s["template"]["metadata"]["labels"].get("rd-iroha3/party") == party,

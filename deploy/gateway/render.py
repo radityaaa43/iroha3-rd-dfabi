@@ -136,6 +136,11 @@ docs = [
              # envoy/opa are docker.io today; the pod spec still carries ghcr-pull like every rd-iroha3-* pod (R15: packages may go private)
              "imagePullSecrets": [{"name": "ghcr-pull"}],
              "enableServiceLinks": False,
+             # R22 (co-location): PREFERRED spread of gateways across workers and rd-iroha3 namespaces (never required: it must still schedule when nodes are scarce)
+             "affinity": {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{"weight": 100, "podAffinityTerm": {
+                 "topologyKey": "kubernetes.io/hostname",
+                 "labelSelector": {"matchLabels": {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/role": "gateway"}},
+                 "namespaceSelector": {"matchLabels": {"app.kubernetes.io/part-of": "rd-iroha3"}}}}]}},
              "securityContext": {"runAsNonRoot": True, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001,
                                  "seccompProfile": {"type": "RuntimeDefault"}},
              "containers": [

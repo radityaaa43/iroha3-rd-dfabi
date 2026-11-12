@@ -74,5 +74,20 @@ a=$("$R" bi "${base[@]}"); b=$("$R" bi "${base[@]}")
 [[ -n $a && $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs or is empty"
 before=$(find "$T" -type f | sort | xargs cksum)
 "$R" bi "${base[@]}" >/dev/null; [[ $(find "$T" -type f | sort | xargs cksum) == "$before" ]] && ok "writes nothing" || fail "files changed"
+# R22 MUTANTS of the gateway Deployment affinity: exactly one PREFERRED hostname term; required or missing or other topology must FAIL
+gw_mut() { # <label> <python statement on the pod spec dict ps>
+  local m; m=$("$R" bi "${base[@]}" | python3 -I -c '
+import sys, json, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
+for d in docs:
+    if d["kind"] == "Deployment":
+        ps = d["spec"]["template"]["spec"]; exec(sys.argv[1])
+print("\n---\n".join(json.dumps(d) for d in docs))' "$2")
+  python3 -I scripts/check-gateway.py bi 1 "$EI" "$OI" <<<"$m" >/dev/null 2>&1 && fail "MUTANT $1 passed the gateway checker" || ok "MUTANT: $1 FAILS the gateway checker"
+}
+gw_mut "the gateway anti-affinity made REQUIRED" 'a = ps["affinity"]["podAntiAffinity"]; a["requiredDuringSchedulingIgnoredDuringExecution"] = [a.pop("preferredDuringSchedulingIgnoredDuringExecution")[0]["podAffinityTerm"]]'
+gw_mut "the gateway affinity missing" 'ps.pop("affinity")'
+gw_mut "the gateway term on topologyKey zone" 'ps["affinity"]["podAntiAffinity"]["preferredDuringSchedulingIgnoredDuringExecution"][0]["podAffinityTerm"]["topologyKey"] = "topology.kubernetes.io/zone"'
+gw_mut "a nodeAffinity added to the gateway" 'ps["affinity"]["nodeAffinity"] = {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": []}}'
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
