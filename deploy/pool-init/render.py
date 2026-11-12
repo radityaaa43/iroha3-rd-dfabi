@@ -34,7 +34,7 @@ toml = "\n".join(
         'party = "bi"',
         'client_toml = "/work/client.toml"',
         'peers_json = "/config/peers.json"',
-        'key_dir = "/keys"',
+        'key_dir = "/pools/keys"',
         'pools_file = "/pools/pools.json"',
         f'fee_asset = "{fee}"',
         'auditor_url = "unused-by-pool-init:8090"',
@@ -67,6 +67,11 @@ meta = lambda name: {"name": name, "namespace": ns, "labels": labels}
 script = " && ".join(
     [
         "set -eu",
+        # BI's two origin (reserve) notes are WRITTEN here by pool-init (create_new): the persistent PVC, owner-only. bi.note stays on
+        # the Secret mount (only linked, never copied); the link is made once and kept for later runs on the same PVC.
+        "mkdir -p /pools/keys",
+        "chmod 700 /pools/keys",
+        "{ test -L /pools/keys/bi.note || ln -s /keys/bi.note /pools/keys/bi.note; }",
         "install -m 600 /gov/bi-gov.seed /work/bi-gov.seed",
         f"rd-dfabi keys client-toml /work bi-gov --torii {bi_torii} --chain {chain} --network-id-file /genesis/genesis.expected_hash",
         "rm -f /work/bi-gov.seed",
