@@ -9,6 +9,8 @@
 # the own peer's Torii :8080, the gateways :8443 (NXDOMAIN until S14), and the holes that must be closed: 1.1.1.1:443, 8.8.8.8:53, the apiserver
 # (KUBERNETES_SERVICE_HOST:443) and the ghcr.io address. The policy allows ONLY cluster DNS, the own peer Torii and the gateways (same shape as driver-egress).
 # --role driver: ONLY a Pod labelled role=driver (positive control of driver-egress / the torii-bootstrap deletion).
+# --role driver-min: like --role driver but labelled ONLY rd-iroha3/role=driver (no part-of/party): admitted by peers-torii and selected by driver-egress, yet it matches NO Service/Deployment selector
+# (the full --role driver probe also lands in Service `driver` endpoints: do not use it once gateways exist). Use driver-min as the P-pos of the torii-bootstrap deletion (S14.G).
 # --role gateway: ONLY a Pod labelled rd-iroha3/role=gateway + app.kubernetes.io/name=gateway (no part-of/party: no Service/Deployment selector matches it), selected by the REAL gateway-egress and admitted
 # by besu's bundle-server netpol: positive own peer :8080, own driver :8091, bundle-server Service :80; negative internet/apiserver/ghcr (+ foreign peer, also ingress-denied). Deadline 1800 s.
 # --role lb --lb-target <public ip>/32 ...: Pod lb-probe (label role=lb-probe only) + NetworkPolicy lb-probe-egress: egress ONLY the target LB /32(s) on TCP 8443 (no DNS, no SA token, no Secret, deadline 1800 s):
@@ -18,13 +20,13 @@
 # Create the Pod first (baseline: everything OPEN), then the policy, then read the log: the holes turn to TIMEOUT. Delete the Pod after; keep or delete the policy per the GO.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "usage: render.sh bi|bank-a|bank-b|bank-c <sha256:<64 hex> driver image digest> [--role driver | --role gateway | --role peer --remote-p2p <public ipv4>/32 ... | --role lb --lb-target <public ipv4>/32 ...]" >&2; exit 2; }
+usage() { echo "usage: render.sh bi|bank-a|bank-b|bank-c <sha256:<64 hex> driver image digest> [--role driver | --role driver-min | --role gateway | --role peer --remote-p2p <public ipv4>/32 ... | --role lb --lb-target <public ipv4>/32 ...]" >&2; exit 2; }
 (( $# >= 2 )) || usage
 party=$1 digest=$2; shift 2
 role="" remotes=() kind=""
 while (( $# )); do
   case $1 in
-    --role) [[ ${2:-} == driver || ${2:-} == peer || ${2:-} == gateway || ${2:-} == lb ]] || usage; role=$2; shift 2 ;;
+    --role) [[ ${2:-} == driver || ${2:-} == driver-min || ${2:-} == peer || ${2:-} == gateway || ${2:-} == lb ]] || usage; role=$2; shift 2 ;;
     --remote-p2p | --lb-target)
       [[ ${2:-} =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || { echo "render.sh: $1 must be a single IPv4 /32 (got '${2:-}')" >&2; exit 2; }
       [[ $2 =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|0\.) ]] && { echo "render.sh: $1 must be a public address, not $2" >&2; exit 2; }
