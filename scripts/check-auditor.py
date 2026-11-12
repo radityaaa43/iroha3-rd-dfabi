@@ -82,7 +82,7 @@ if dep:
         "replicas 1 + Recreate (RWO volume, one approver at a time)": s["replicas"] == 1 and s["strategy"] == {"type": "Recreate"},
         "args auditor": c["args"] == ["auditor", "/config/rd-dfabi.toml"],
         "port 8090": [p["containerPort"] for p in c["ports"]] == [8090],
-        "role labels": s["template"]["metadata"]["labels"] == role and s["selector"]["matchLabels"] == role,
+        "role labels (+ rd/egress-locked on the pod template: allow-all-egress baselines skip locked pods; the selector stays role only)": s["template"]["metadata"]["labels"] == {**role, "rd/egress-locked": "true"} and s["selector"]["matchLabels"] == role,
         "no token": pod["automountServiceAccountToken"] is False,
         "non-root": pod["securityContext"].get("runAsNonRoot") is True and pod["securityContext"].get("runAsUser") == 1001,
         "container hardening": c["securityContext"].get("allowPrivilegeEscalation") is False
@@ -220,6 +220,16 @@ if gwtls:
             if not good_tls:
                 bad.append(f"cluster gw-{q}: upstream mTLS must pin ONLY {q}'s server CA, match SAN {host}, present the client leaf, TLS >= 1.2, no skip-verify: {json.dumps(tc)[:300]}")
 
+        # analyst ruling 6(b)(ii): the committee has 4 DISTINCT endpoints, one per party, in roster order bi, bank-a, bank-b, bank-c (upstream private_settlement.rs:345-377)
+        tor = {}
+        cfgm = need("ConfigMap", "auditor-config")
+        if cfgm:
+            tor = tomllib.loads(cfgm["data"]["rd-dfabi.toml"]).get("torii", {})
+        urls = [tor.get(q) for q in ("bi", "bank-a", "bank-b", "bank-c")]
+        cas = [c.get("transport_socket", {}).get("typed_config", {}).get("common_tls_context", {}).get("validation_context", {}).get("trusted_ca", {}).get("filename") for c in (cls.get(f"gw-{q}", {}) for q in ("bi", "bank-a", "bank-b", "bank-c"))]
+        if len(set(urls)) != 4 or None in urls or len(set(cas)) != 4 or None in cas or len(set(got)) != 4:
+            bad.append(f"--gw-tls: 4 DISTINCT endpoints (urls {urls}), 4 distinct server-CA pins ({cas}), 4 distinct listeners ({got}), in roster order")
+
 svc = need("Service", "auditor")
 if svc and (svc["spec"]["type"] != "ClusterIP" or svc["spec"]["ports"][0]["port"] != 8090):
     bad.append("Service auditor: ClusterIP 8090")
@@ -242,8 +252,8 @@ if eg:
          "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
         {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": party}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
     ]
-    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "auditor"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
-        bad.append(f"NetworkPolicy auditor-egress: selector role=auditor, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "auditor", "rd/egress-locked": "true"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"NetworkPolicy auditor-egress: selector role=auditor + rd/egress-locked=true, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
     if gwtls:  # DNS + the 4 gateways :8443 (cluster 1 by ns+role selector, bank-c's gateway-lb by /32), NO Torii
         want_eg = [want_eg[0], {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{q}"}}, "podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}
                                        for q in ("bi", "bank-a", "bank-b")] + [{"ipBlock": {"cidr": f"{bankc_ip}/32"}}], "ports": [{"protocol": "TCP", "port": 8443}]}]

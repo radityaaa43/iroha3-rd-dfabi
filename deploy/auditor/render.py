@@ -124,7 +124,7 @@ docs = [
          # RWO volume and one approver at a time: never two pods.
          "strategy": {"type": "Recreate"},
          "selector": {"matchLabels": role},
-         "template": {"metadata": {"labels": role}, "spec": {
+         "template": {"metadata": {"labels": {**role, "rd/egress-locked": "true"}}, "spec": {
              "automountServiceAccountToken": False,
              "enableServiceLinks": False,
              "imagePullSecrets": [{"name": "ghcr-pull"}],
@@ -187,10 +187,11 @@ docs = [
      "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}, "policyTypes": ["Ingress"],
               "ingress": [{"from": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "gateway"}}}],
                            "ports": [{"protocol": "TCP", "port": 8090}]}]}},
-    # R17 (key-holding pod: the auditor seed): its own narrow Egress policy, applied together with it. DNS and its own party's Torii only;
+    # R17 (key-holding pod: the auditor seed): its own narrow Egress policy, applied together with it. The pod also carries rd/egress-locked=true (a namespace allow-all-egress baseline that
+    # skips locked pods, e.g. allow-dns-egress, then never widens it) and this policy selects on that label too. DNS and its own party's Torii only;
     # approvals arrive INBOUND through the gateway, so no cross-party and no internet egress.
     {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("auditor-egress"),
-     "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor"}}, "policyTypes": ["Egress"],
+     "spec": {"podSelector": {"matchLabels": {"rd-iroha3/role": "auditor", "rd/egress-locked": "true"}}, "policyTypes": ["Egress"],
               "egress": [
                   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],

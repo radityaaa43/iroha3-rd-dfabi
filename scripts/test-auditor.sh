@@ -86,6 +86,11 @@ gmut "an admin interface on the sidecar" 'e = '"$EV"'; e["admin"] = {"address": 
 gmut "Torii 8080 back in the auditor egress" 'by[("NetworkPolicy","auditor-egress")]["spec"]["egress"].append({"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": "bank-a"}}}], "ports": [{"protocol": "TCP", "port": 8080}]})'
 gmut "an extra ipBlock in the auditor egress" 'by[("NetworkPolicy","auditor-egress")]["spec"]["egress"][1]["to"].append({"ipBlock": {"cidr": "8.8.8.8/32"}})'
 gmut "the client key mounted into the auditor container" 'by[("Deployment","auditor")]["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].append({"name": "client-cert", "mountPath": "/client", "readOnly": True})'
+gmut "the auditor pod template without rd/egress-locked" 'by[("Deployment","auditor")]["spec"]["template"]["metadata"]["labels"].pop("rd/egress-locked")'
+gmut "auditor-egress selecting role only (no rd/egress-locked)" 'by[("NetworkPolicy","auditor-egress")]["spec"]["podSelector"]["matchLabels"].pop("rd/egress-locked")'
+gmut "rd/egress-locked=true added to the Deployment selector" 'by[("Deployment","auditor")]["spec"]["selector"]["matchLabels"]["rd/egress-locked"] = "true"'
+gmut "two parties sharing one torii URL (not 4 distinct endpoints)" 't = by[("ConfigMap","auditor-config")]["data"]; t["rd-dfabi.toml"] = t["rd-dfabi.toml"].replace("http://127.0.0.1:18103/", "http://127.0.0.1:18102/")'
+gmut "two upstreams pinning one server CA" 'e = '"$EV"'; e["static_resources"]["clusters"][2]["transport_socket"]["typed_config"]["common_tls_context"]["validation_context"]["trusted_ca"]["filename"] = "/server-cas/bank-a-server-ca.pem"; by[("ConfigMap","auditor-gw-envoy")]["data"]["envoy.yaml"] = yaml.safe_dump(e)'
 gmut "the sidecar image by tag" 'by[("Deployment","auditor")]["spec"]["template"]["spec"]["containers"][1]["image"] = "envoyproxy/envoy:v1.30.0"'
 gmut "a torii URL on a non-loopback host" 'import tomllib; t = by[("ConfigMap","auditor-config")]["data"]; t["rd-dfabi.toml"] = t["rd-dfabi.toml"].replace("http://127.0.0.1:18102/", "http://bank-a-0.bank-a.rd-iroha3-bank-a.svc.cluster.local:8080/")'
 # MUTANTS of the --keys-in-pvc render: each must make the PVC checker FAIL

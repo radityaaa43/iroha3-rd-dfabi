@@ -1,0 +1,25 @@
+name: auditor-envoy-validate
+# `envoy --mode validate` of the rendered auditor gw-tls sidecar config with the PINNED envoy digest (the same digest the render pins).
+# Throwaway certificates, no secrets, no cluster. Docker runs only here, never on the operator host (scripts/smoke-auditor-sidecar.sh is the single source).
+on:
+  pull_request:
+    paths: ['deploy/auditor/**', 'scripts/smoke-auditor-sidecar.sh', 'scripts/check-auditor.py', '.github/workflows/auditor-envoy-validate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ENVOY_IMAGE: envoyproxy/envoy@sha256:b1f389c3a6148e85e9de364cb867aa2e5802153abb37ad80f1f2241d693da32a
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: "the render pins this exact envoy digest"
+        run: grep -q "$ENVOY_IMAGE" deploy/auditor/render.py
+      - name: "pull the pinned envoy"
+        run: docker pull -q "$ENVOY_IMAGE" >/dev/null
+      - name: "envoy --mode validate of the rendered sidecar config"
+        run: bash scripts/smoke-auditor-sidecar.sh "$ENVOY_IMAGE"
