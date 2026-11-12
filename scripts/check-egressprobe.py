@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver | peer <remote /32>...]
-(driver = the --role driver Pod only; peer = the --role peer Pod only, labelled ONLY rd-iroha3/role=peer, with the given remote P2P /32 addresses)"""
+"""Check the rendered egress-probe manifests on stdin. Usage: check-egressprobe.py <party> <digest> [driver | peer <remote ip>... | gateway | lb <target ip>...]
+(driver = the --role driver Pod only; peer = the --role peer Pod only, labelled ONLY rd-iroha3/role=peer, with the given remote P2P /32 addresses;
+gateway = the --role gateway Pod only, labelled ONLY role=gateway + app.kubernetes.io/name=gateway; lb = the --role lb Pod + its own egress policy: ONLY the target LB /32 on 8443)"""
 import json
 import sys
 
@@ -9,8 +10,8 @@ import yaml
 party, digest = sys.argv[1:3]
 role = sys.argv[3] if len(sys.argv) > 3 else ""
 remotes = sys.argv[4:]
-drole, prole = role == "driver", role == "peer"
-pname = "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe"
+drole, prole, grole, lrole = role == "driver", role == "peer", role == "gateway", role == "lb"
+pname = "egress-probe-driver" if drole else "egress-probe-peer" if prole else "egress-probe-gateway" if grole else "lb-probe" if lrole else "egress-probe"
 C1 = ("bi", "bank-a", "bank-b")
 same = C1 if party in C1 else ("bank-c",)
 foreign = {"bi": "bank-a", "bank-a": "bank-b", "bank-b": "bi"}.get(party)  # ring inside cluster 1; bank-c has no other namespace on its cluster
@@ -18,7 +19,7 @@ ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 bad = []
-want = {("Pod", pname)} if (drole or prole) else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
+want = {("Pod", pname)} if (drole or prole or grole) else {("Pod", "lb-probe"), ("NetworkPolicy", "lb-probe-egress")} if lrole else {("Pod", "egress-probe"), ("NetworkPolicy", "egress-probe-egress")}
 if set(by) != want or len(docs) != len(want):
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)}")
 for (k, n), d in by.items():
@@ -26,6 +27,8 @@ for (k, n), d in by.items():
         bad.append(f"{k} {n} in namespace {d['metadata'].get('namespace')}, want {ns}")
 flat = json.dumps(docs)
 for banned in ("PRIVATE KEY", "secretName", "secretKeyRef", "nodeName", "hostNetwork", "serviceAccountName", "ipBlock"):
+    if banned == "ipBlock" and lrole:  # the LB probe's own policy allows exactly the other cluster's LB /32 (checked below)
+        continue
     if banned in flat:
         bad.append(f"rendered objects must not contain {banned!r}")
 pod = by.get(("Pod", pname))
@@ -35,8 +38,11 @@ if pod:
     checks = {
         "labels": (lab.get("rd-iroha3/role") == "driver" and "rd/egress-locked" not in lab and lab.get("rd-iroha3/party") == party) if drole else
                   (lab == {"rd-iroha3/role": "peer"}) if prole else  # ONLY role=peer: no part-of/party, so no StatefulSet/Service selector (all need part-of+party+role) can match it
+                  (lab == {"rd-iroha3/role": "gateway", "app.kubernetes.io/name": "gateway"}) if grole else  # no part-of/party: the gateway Service/Deployment selectors cannot match it
+                  (lab == {"rd-iroha3/role": "lb-probe"}) if lrole else
                   (lab.get("rd-iroha3/role") == "egress-probe" and lab.get("rd/egress-locked") == "true" and lab.get("rd-iroha3/party") == party),
         "no container ports": not c.get("ports"),
+        "deadline 1800 s": s.get("activeDeadlineSeconds") == 1800 if (grole or lrole) else True,
         "digest-pinned driver image": c["image"] == f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}",
         "imagePullSecrets ghcr-pull": s.get("imagePullSecrets") == [{"name": "ghcr-pull"}],
         "imagePullPolicy Always": c.get("imagePullPolicy") == "Always",
@@ -58,7 +64,17 @@ if pod:
             bad.append(f"probe loop must read only /status counts, found {banned!r}")
     base = ("1.1.1.1", "8.8.8.8", "KUBERNETES_SERVICE_HOST", "ghcr.io", "sleep 15", f"{party}-0.{party}.rd-iroha3-{party}.svc.cluster.local")
     status = ("GET /status HTTP/1.0", "(peers|blocks|view_changes)", "Accept: application/json", "http=", "ctype=", "bytes=", "# PARSE-BEGIN", "# PARSE-END")
-    if prole:  # NEW connections: every same-cluster peer on 1337 and 8080, every remote LB /32 on 1337 (positive); foreign driver (negative, also ingress-denied)
+    if lrole:  # open nothing but the target LB(s) on 8443
+        need = ("for t in " + " ".join(remotes), "8443")
+        for n in ("1.1.1.1", "8.8.8.8", "KUBERNETES_SERVICE_HOST", "ghcr.io", "getent", "GET /status"):
+            if n in script:
+                bad.append(f"lb-role probe must only connect to the LB target(s): found {n!r}")
+    elif grole:  # R17 gateway-egress controls: positive = own peer 8080, own driver 8091, the OPA bundle-server Service :80; negative = internet/apiserver/ghcr (+ foreign peer, also ingress-denied)
+        need = base + (f"driver.rd-iroha3-{party}.svc.cluster.local", f"bundle-server.rd-zeto-{party}.svc.cluster.local", "8091", "8080")
+        need += (f"{foreign}-0.{foreign}.rd-iroha3-{foreign}.svc.cluster.local",) if foreign else ()
+        if "GET /status" in script:
+            bad.append("gateway-role probe must not read /status")
+    elif prole:  # NEW connections: every same-cluster peer on 1337 and 8080, every remote LB /32 on 1337 (positive); foreign driver (negative, also ingress-denied)
         need = base + tuple(f"{q}-0.{q}.rd-iroha3-{q}.svc.cluster.local" for q in same) + ("for r in " + " ".join(remotes), "1337", "8080")
         need += (f"driver.rd-iroha3-{foreign}.svc.cluster.local",) if foreign else ()
         if "GET /status" in script:
@@ -70,10 +86,17 @@ if pod:
     for n in need:
         if n not in script:
             bad.append(f"probe loop lacks {n!r}")
-    if prole and not remotes:
-        bad.append("peer-role check needs at least one remote /32 argument")
-np = by.get(("NetworkPolicy", "egress-probe-egress"))
-if np and not (drole or prole):
+    if (prole or lrole) and not remotes:
+        bad.append("peer/lb-role check needs at least one target ip argument")
+np = by.get(("NetworkPolicy", "lb-probe-egress" if lrole else "egress-probe-egress"))
+if np and lrole:
+    sp = np["spec"]
+    want_eg = [{"to": [{"ipBlock": {"cidr": f"{t}/32"}} for t in remotes], "ports": [{"protocol": "TCP", "port": 8443}]}]
+    if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "lb-probe"}} or sp.get("policyTypes") != ["Egress"] or "ingress" in sp:
+        bad.append(f"NetworkPolicy lb-probe-egress: selector role=lb-probe, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
+    if sp.get("egress") != want_eg:
+        bad.append(f"NetworkPolicy lb-probe-egress must allow ONLY the target LB /32(s) on TCP 8443 (no DNS, nothing else): {json.dumps(sp.get('egress'))}")
+elif np and not (drole or prole or grole):
     sp = np["spec"]
     c1 = ("bi", "bank-a", "bank-b")
     gw_ns = c1 if party in c1 else ("bank-c",)
