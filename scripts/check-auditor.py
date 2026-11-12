@@ -49,7 +49,11 @@ if cm:
         bad.append(f"auditor-config keys: {sorted(cm['data'])}")
     else:
         cfg = tomllib.loads(cm["data"]["rd-dfabi.toml"])
-        want_cfg = {"chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "peers_json": "/config/peers.json", "key_dir": "/keys", "party": party}
+        # the driver image's Config (node-build driver/src/config.rs `Config`) has no serde default for these: a missing one makes the auditor exit 1 at start ("missing field `account_domain`")
+        missing = [k for k in ("chain", "network_id_file", "account_domain", "peers_json", "key_dir", "fee_asset", "auditor_url", "torii", "assets", "lanes") if k not in cfg]
+        if missing:
+            bad.append(f"rd-dfabi.toml lacks required Config fields {missing}")
+        want_cfg = {"chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "account_domain": "wonderland.universal", "peers_json": "/config/peers.json", "key_dir": "/keys", "party": party}
         for k, v in want_cfg.items():
             if cfg.get(k) != v:
                 bad.append(f"rd-dfabi.toml {k} = {cfg.get(k)!r}, want {v!r}")

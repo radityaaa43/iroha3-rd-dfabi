@@ -35,6 +35,7 @@ toml = "\n".join(
         f"# rd-dfabi auditor config of {party} (public values only; keys come from " + ("the audit-store PVC, created by the initContainer keys (create-only)" if pvc else f"Secret {key_name}-key, created by the org itself") + ").",
         f'chain = "{chain}"',
         'network_id_file = "/genesis/genesis.expected_hash"',
+        'account_domain = "wonderland.universal"',  # required by the driver image's Config (no serde default); the same value as deploy/driver/render.py
         f'party = "{party}"',
         'peers_json = "/config/peers.json"',
         'key_dir = "/keys"',
