@@ -29,13 +29,15 @@ jobs:
           python3 - "$RUNNER_TEMP/fs.tar" <<'PY'
           import re, sys, tarfile
           pat = re.compile(rb"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----")
-          hits = []
+          # library / documentation text that only MENTIONS the PEM header (awscli examples, botocore data, the python rsa package, its bytecode) is allowlisted by path and still printed
+          allow = re.compile(r"^usr/lib/python[0-9.]+/site-packages/(awscli/(examples|botocore/data)/|rsa/)")
+          hits, ignored = [], []
           with tarfile.open(sys.argv[1]) as t:
               for m in t:
-                  if m.isfile() and m.size < 8 * 1024 * 1024:
-                      if pat.search(t.extractfile(m).read()):
-                          hits.append(m.name)
-          print("files scanned; private-key hits:", hits)
+                  if m.isfile() and m.size < 8 * 1024 * 1024 and pat.search(t.extractfile(m).read()):
+                      (ignored if allow.match(m.name) else hits).append(m.name)
+          print("allowlisted doc/library mentions:", len(ignored))
+          print("private-key hits OUTSIDE the allowlist:", hits)
           sys.exit(1 if hits else 0)
           PY
       - name: "tools image: kubectl --patch-file and base64 -w0, uid 1001, read-only root"
