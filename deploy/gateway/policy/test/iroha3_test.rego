@@ -143,7 +143,34 @@ rows := [
 			{"roles": ["bi"], "nodes": ["bank-a", "bank-b", "bank-c"]},
 		],
 	},
+	{
+		"row": 15, "method": "GET", "paths": ["/keys"],
+		"allow": [{"roles": all_roles, "nodes": auditor_nodes}],
+		"deny": [{"roles": all_roles, "nodes": ["bank-c"]}],
+	},
+	{
+		"row": 15, "method": "POST", "paths": ["/approve"],
+		"allow": [{"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": auditor_nodes}],
+		"deny": [{"roles": ["lensa"], "nodes": nodes}, {"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": ["bank-c"]}],
+	},
 ]
+
+# Row 15: the three auditor nodes (bank-c runs no auditor).
+auditor_nodes := ["bi", "bank-a", "bank-b"]
+
+# Row 15 is exact: other methods, a query, a sub-path or BI's /records never pass for any role at any node.
+test_auditor_routes_are_exact if {
+	every n in nodes {
+		every r in all_roles {
+			not allowed(n, r, "POST", "/keys")
+			not allowed(n, r, "GET", "/approve")
+			not allowed(n, r, "GET", "/keys?x=1")
+			not allowed(n, r, "GET", "/keys/x")
+			not allowed(n, r, "POST", "/approve?x=1")
+			not allowed(n, r, "GET", "/records")
+		}
+	}
+}
 
 test_allow_rows if {
 	every r in rows {
