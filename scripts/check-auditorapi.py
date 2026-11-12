@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Check the rendered auditor-client `keygen` / `put` stages (deploy/auditor-sign, analyst OPTION C) on stdin.
-Usage: check-auditorapi.py keygen <party> <tools-image> <driver digest> <ip/32:port>... | put <party> <tools-image> <driver digest> <cert-file>
+Usage: check-auditorapi.py keygen <party> <tools-image> <driver digest> [--replace] <ip/32:port>... | put <party> <tools-image> <driver digest> <cert-file>
 The key is made in a pod of the auditor's own namespace and written by that pod into the pre-created EMPTY Secret auditor-client-cert through a Role limited to
 get/update/patch on resourceNames [auditor-client-cert] (create / list / watch / delete / other secrets: never). Only the CSR / the public cert is printed.
 The pod has TWO pinned images: the DRIVER image (initContainer `openssl`: the key + CSR are made there, into a MEMORY emptyDir) and the TOOLS image (container `run`: kubectl, no openssl)."""
@@ -10,7 +10,8 @@ import sys
 import yaml
 
 stage, party, image, drv = sys.argv[1:5]
-extra = sys.argv[5:]
+extra = [a for a in sys.argv[5:] if a != "--replace"]
+replace = "--replace" in sys.argv[5:]  # keygen rendered with --replace (key ROTATION: the Secret already holds the pair [tls.crt tls.key]; nothing is deleted)
 ns = f"rd-iroha3-{party}"
 SECRET = "auditor-client-cert"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
@@ -99,7 +100,12 @@ if job:
         if banned in icmd:
             bad.append(f"the openssl initContainer holds the key: it must not contain {banned!r}")
     if stage == "keygen":
-        need = ("{{if .data}}{{len .data}}{{else}}0{{end}}", "refusing to overwrite a key", "base64 -w0 /work/tls.key", "--patch-file /tmp/patch.json", '{"data":{"tls.key":',
+        guard = ('test "$n" = 2', "refusing to replace") if replace else ('test "$n" = 0', "refusing to overwrite a key")
+        if replace and ('test "$n" = 0' in cmd or "refusing to overwrite a key" in cmd):
+            bad.append("--replace must not keep the empty-Secret guard")
+        if not replace and "refusing to replace" in cmd:
+            bad.append("the replace guard only with --replace")
+        need = ("{{if .data}}{{len .data}}{{else}}0{{end}}", *guard, "base64 -w0 /work/tls.key", "--patch-file /tmp/patch.json", '{"data":{"tls.key":',
                 "cat /work/auditor-client.csr", "{{range $k, $v := .data}}{{$k}} {{end}}")
         for n in ("-newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes", f"-subj '/CN={party}-auditor'", "-keyout /work/tls.key", "-out /work/auditor-client.csr", "umask 077"):
             if n not in icmd:
@@ -112,7 +118,7 @@ if job:
         if n not in cmd:
             bad.append(f"script lacks {n!r}")
     # the key / any secret value is never printed, put into an argv, or exported: names only
-    for banned in ("cat /tmp/tls.key", "cat /work/tls.key", "echo $", "echo \"", "-o yaml", "-o json", "-o jsonpath", "--output", " -p ", "--patch '", '--patch "', "base64 -d", "--decode", "curl", "wget"):
+    for banned in ("cat /tmp/tls.key", "cat /work/tls.key", "echo $", "echo \"", "-o yaml", "-o json", "-o jsonpath", "--output", " -p ", "--patch '", '--patch "', "base64 -d", "--decode", "curl", "wget", "kubectl delete", "kubectl replace", "kubectl create", "kubectl apply"):
         if banned in cmd:
             bad.append(f"script must never contain {banned!r}")
     if stage == "keygen" and "tls.crt" in cmd:

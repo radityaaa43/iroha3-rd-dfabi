@@ -84,6 +84,26 @@ for p in bi bank-a bank-b; do
   out=$("$R" keygen "$p" "$TI" "$D" "${API[@]}" 2>&1) || { fail "$p keygen render failed: $out"; continue; }
   python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" 172.24.11.240/32:6443 172.24.40.81/32:6443 <<<"$out" || fails=$((fails + 1))
 done
+# --replace (key ROTATION without deleting the key-holding Secret; analyst C1): the guard becomes "exactly the existing pair", everything else (Role, NP, images) is unchanged
+for p in bi bank-a bank-b; do
+  out=$("$R" keygen "$p" "$TI" "$D" "${API[@]}" --replace 2>&1) || { fail "$p keygen --replace render failed: $out"; continue; }
+  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" --replace 172.24.11.240/32:6443 172.24.40.81/32:6443 <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" 172.24.11.240/32:6443 172.24.40.81/32:6443 <<<"$out" >/dev/null 2>&1 && fail "MUTANT: a --replace render passed the plain (empty-Secret) checker ($p)" || ok "MUTANT: a --replace render FAILS the plain checker ($p)"
+  plain=$("$R" keygen "$p" "$TI" "$D" "${API[@]}")
+  python3 -I scripts/check-auditorapi.py keygen "$p" "$TI" "$D" --replace 172.24.11.240/32:6443 172.24.40.81/32:6443 <<<"$plain" >/dev/null 2>&1 && fail "MUTANT: a plain render passed the --replace checker ($p)" || ok "MUTANT: a plain render FAILS the --replace checker ($p)"
+done
+[[ $("$R" keygen bank-a "$TI" "$D" "${API[@]}" | cksum) != $("$R" keygen bank-a "$TI" "$D" "${API[@]}" --replace | cksum) ]] && ok "--replace changes the render" || fail "--replace changed nothing"
+refuse "--replace without --apiserver" "usage" keygen bi "$TI" "$D" --replace
+refuse "--replace twice" "usage" keygen bi "$TI" "$D" "${API[@]}" --replace --replace
+refuse "--replace on put" "usage" put bi "$TI" "$D" --replace
+rg=$("$R" keygen bank-a "$TI" "$D" "${API[@]}" --replace)
+rmut() { # <label> <sed expression on the rendered JSON text>
+  sed -e "$2" <<<"$rg" | python3 -I scripts/check-auditorapi.py keygen bank-a "$TI" "$D" --replace 172.24.11.240/32:6443 172.24.40.81/32:6443 >/dev/null 2>&1 && fail "MUTANT $1 passed" || ok "MUTANT: $1 FAILS the --replace checker"
+}
+rmut "the --replace guard accepts an empty Secret (= 0)" 's/test \\"$n\\" = 2/test \\"$n\\" = 0/'
+rmut "the --replace guard removed" 's/test \\"$n\\" = 2 ||/true ||/'
+rmut "the --replace Job also patches tls.crt" 's/{\\"data\\":{\\"tls.key\\"/{\\"data\\":{\\"tls.crt\\":\\"x\\",\\"tls.key\\"/'
+rmut "the --replace Job also deletes the Secret" 's/kubectl patch secret/kubectl delete secret auditor-client-cert; kubectl patch secret/'
 kg=$("$R" keygen bank-a "$TI" "$D" "${API[@]}")
 kmut() { # <label> <python on docs by (kind,name)>
   python3 -I -c '

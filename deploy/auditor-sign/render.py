@@ -71,7 +71,8 @@ def api_job(name, image, drv, init_script, script, mounts=(), volumes=()):
                          "volumes": [*volumes, {"name": "work", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}, {"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}]}}}}
 NAMES = "kubectl get secret " + SECRET + " -o go-template='{{range $k, $v := .data}}{{$k}} {{end}}' >&2"  # key NAMES only, never a value
 if stage == "keygen":
-    image, drv, api = sys.argv[3], sys.argv[4], sys.argv[5:]
+    image, drv, api = sys.argv[3], sys.argv[4], [a for a in sys.argv[5:] if a != "--replace"]
+    replace = "--replace" in sys.argv[5:]  # key ROTATION: the Secret already holds the pair [tls.crt tls.key]; the Job overwrites tls.key by patch, nothing is deleted
     init_script = "\n".join([
         "set -eu",
         "umask 077",
@@ -81,8 +82,10 @@ if stage == "keygen":
         "set -eu",
         "umask 077",
         # never overwrite: the Secret must be empty (a lost key is a new identity + a policy update, never silent)
+        # --replace (rotation): it must hold EXACTLY the existing pair (anything else = refuse), and only tls.key is patched below
         "n=$(kubectl get secret " + SECRET + " -o go-template='{{if .data}}{{len .data}}{{else}}0{{end}}')",
-        "test \"$n\" = 0 || { echo 'Secret " + SECRET + " is not empty: refusing to overwrite a key' >&2; exit 1; }",
+        *(["test \"$n\" = 2 || { echo 'Secret " + SECRET + " does not hold exactly the existing pair (2 keys): refusing to replace' >&2; exit 1; }"] if replace else
+          ["test \"$n\" = 0 || { echo 'Secret " + SECRET + " is not empty: refusing to overwrite a key' >&2; exit 1; }"]),
         # the key reaches the API server through a patch FILE in the memory emptyDir (printf is a builtin: no key in any argv)
         "printf '{\"data\":{\"tls.key\":\"%s\"}}' \"$(base64 -w0 /work/tls.key)\" > /tmp/patch.json",
         "kubectl patch secret " + SECRET + " --type=merge --patch-file /tmp/patch.json >/dev/null",

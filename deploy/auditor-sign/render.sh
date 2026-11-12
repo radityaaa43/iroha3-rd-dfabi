@@ -6,6 +6,8 @@
 #       SA auditor-client-api + Role (get/update/patch on resourceNames [auditor-client-cert] ONLY) + RoleBinding + NetworkPolicy auditor-client-api-egress (egress = the given API server
 #       addresses ONLY) + Job auditor-client-keygen: initContainer (the pinned DRIVER image: has openssl) makes the EC P-256 key + CSR (CN=<party>-auditor) into a MEMORY emptyDir; the main container (the pinned
 #       TOOLS image: kubectl, no openssl) refuses a non-empty Secret, patches ONLY tls.key into it and prints ONLY the CSR.
+#       --replace (key ROTATION, analyst C1; nothing is deleted): the Job requires the Secret to hold EXACTLY the existing pair (2 keys) instead of being empty, and patches ONLY tls.key over it
+#       (the old tls.crt stays until `put` overwrites it). Without the flag the output is unchanged (empty Secret required).
 #   deploy/auditor-sign/render.sh sign <bi|bank-a|bank-b> <sha256:<64 hex> driver image digest> <csr-file>
 #       ConfigMap auditor-client-csr + Job auditor-client-sign (the org's OWN role CA Secret iroha3-role-ca, read-only 0400; prints ONLY the public cert) + NetworkPolicy auditor-client-sign-egress (deny-all).
 #   deploy/auditor-sign/render.sh put <bi|bank-a|bank-b> <tools-image@sha256:digest> <sha256:driver digest> <cert-file>
@@ -38,8 +40,9 @@ case $stage in
     drv=$1; shift
     [[ $drv =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "render.sh: the driver image must be pinned by a digest (sha256:<64 lowercase hex>): got '$drv'" >&2; exit 2; }
     if [[ $stage == keygen ]]; then
-      api=()
+      api=() replace=""
       while (( $# )); do
+        if [[ $1 == --replace ]]; then [[ -z $replace ]] || usage; replace=--replace; shift; continue; fi
         [[ $1 == --apiserver && -n ${2:-} ]] || usage
         [[ $2 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32:[0-9]{1,5}$ ]] || { echo "render.sh: --apiserver must be <ipv4>/32:<port> (got '$2')" >&2; exit 2; }
         # standing orchestrator rule (proven on both clusters 2026-11-12): an ipBlock on the kube Service ClusterIP :443 is CLOSED on this CNI; the API Service ENDPOINT IPs :6443 work.
@@ -48,9 +51,9 @@ case $stage in
         api+=("$2"); shift 2
       done
       (( ${#api[@]} >= 1 )) || usage
-      exec python3 -I "$here/render.py" keygen "$party" "$image" "$drv" "${api[@]}"
+      exec python3 -I "$here/render.py" keygen "$party" "$image" "$drv" ${replace:+"$replace"} "${api[@]}"
     fi
-    (( $# == 1 )) || usage
+    (( $# == 1 )) && [[ $1 != --replace ]] || usage
     crt=$1
     [[ -f $crt ]] || { echo "render.sh: certificate file $crt not found" >&2; exit 2; }
     grep -q 'PRIVATE KEY' "$crt" && { echo "render.sh: $crt contains a private key: only the PUBLIC certificate goes in" >&2; exit 2; }
