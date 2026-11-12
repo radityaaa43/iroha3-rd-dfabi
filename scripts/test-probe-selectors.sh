@@ -27,11 +27,11 @@ keys:
 YAML
 EI=envoyproxy/envoy@sha256:$(printf 'b%.0s' $(seq 1 64)); OI=openpolicyagent/opa@sha256:$(printf 'c%.0s' $(seq 1 64))
 ns_render() { # <party> -> every render of that namespace (no probe)
-  local p=$1 c2=() gw2=()
-  [[ $p == bank-c ]] && { c2=(--cluster 2); gw2=(--cluster 2 --lb-acl acl-test --lb-range 198.51.100.7/32); }
+  local p=$1 c2=() gw2=() gwr=()
+  [[ $p == bank-c ]] && { c2=(--cluster 2); gw2=(--cluster 2 --lb-acl acl-test --lb-range 198.51.100.7/32); gwr=(--remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22);}
   deploy/peers/render.sh "${c2[@]}" --p2p-egress-cidr 198.51.100.7/32 "$p" $H $CIDR
   echo "---"; deploy/p2p/render.sh "${c2[@]}" --acl-id acl-test --external-cidr 198.51.100.7/32 "$p"
-  echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls
+  echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls "${gwr[@]}"
   echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI" --opa-config "$T/opa.yaml" "${gw2[@]}"
   if [[ $p != bank-c ]]; then echo "---"; deploy/auditor/render.sh "$p" "$D" "$P"; fi
   if [[ $p == bi ]]; then echo "---"; deploy/pool-init/render.sh "$D" "$P" 1000 100; fi
