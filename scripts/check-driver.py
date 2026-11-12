@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Check rendered S17 driver manifests on stdin. Usage: check-driver.py <party> <digest> <hash8> <chain-id>"""
+"""Check rendered S17 driver manifests on stdin. Usage: check-driver.py <party> <digest> <hash8> <chain-id> [tls [<remote /32>...]] [mint:<max_rd>:<max_dfabi>]
+(mint:… = rendered with --mint-enabled: the BI driver enables POST /mint; caps in the [auditor] table, parties from accounts.json)"""
 import json
 import sys
 import tomllib
@@ -7,8 +8,10 @@ import tomllib
 import yaml
 
 party, digest, h8, chain = sys.argv[1:5]
-tlsmode = len(sys.argv) > 5 and sys.argv[5] == "tls"  # rendered with --audit-tls (iroha3 S13 transport A)
-remote = sys.argv[6:] if tlsmode else []  # --remote-gw-cidr values (gateways on the OTHER cluster, ipBlock TCP 8443)
+mint = next((a for a in sys.argv[5:] if a.startswith("mint:")), None)
+args5 = [a for a in sys.argv[5:] if not a.startswith("mint:")]
+tlsmode = bool(args5) and args5[0] == "tls"  # rendered with --audit-tls (iroha3 S13 transport A)
+remote = args5[1:] if tlsmode else []  # --remote-gw-cidr values (gateways on the OTHER cluster, ipBlock TCP 8443)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
@@ -56,6 +59,21 @@ if cm:
                 bad.append(f"[tls]: {cfg.get('tls')}")
         elif "audit" in cfg or "tls" in cfg:
             bad.append("[audit]/[tls] only with --audit-tls")
+        accounts = {"bi": "ed0120bb", "bank-a": "ed0120cc", "bank-b": "ed0120dd", "bank-c": "ed0120ee"}  # fixture values of test-driver.sh (accounts.json)
+        if mint:
+            _, mrd, mdf = mint.split(":")
+            want_aud = {"listen": "0.0.0.0:8090", "store_dir": "/audit-store", "max_rd": int(mrd), "max_dfabi": int(mdf),
+                        "parties": [accounts[q] for q in ("bi", "bank-a", "bank-b", "bank-c")]}
+            if party != "bi":
+                bad.append("mint is for the BI driver only")
+            if cfg.get("mint_enabled") is not True:
+                bad.append(f"mint_enabled must be true (top-level key): {cfg.get('mint_enabled')!r}")
+            if cfg.get("auditor") != want_aud:
+                bad.append(f"[auditor] caps table: {cfg.get('auditor')} want {want_aud}")
+            if cm["data"]["rd-dfabi.toml"].index("mint_enabled") > cm["data"]["rd-dfabi.toml"].index("["):
+                bad.append("mint_enabled must be a TOP-LEVEL key (before the first table)")
+        elif "mint_enabled" in cfg or "auditor" in cfg:
+            bad.append("mint_enabled / [auditor] only with --mint-enabled (BI)")
         if cfg.get("party") != party:  # lead condition (node-build#21): no bank may rely on the default `bi`
             bad.append(f"rd-dfabi.toml party = {cfg.get('party')!r}, want {party!r} (set explicitly per party)")
         if cfg.get("lanes") != {"rd": 1, "dfabi": 2}:

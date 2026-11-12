@@ -14,6 +14,7 @@ CHAIN=11111111-2222-4333-8444-555555555555
 echo "$CHAIN" > "$P/chain_id"
 printf 'hash:%s#ABCD\n' "${H64^^}" > "$P/genesis.expected_hash"
 jq -n '[ "bi","bank-a","bank-b","bank-c" | {party: ., public_key: ("ea0130" + .), pop_hex: "0xaa"} ]' > "$P/peers.json"
+jq -n '{bi:"ed0120bb","bank-a":"ed0120cc","bank-b":"ed0120dd","bank-c":"ed0120ee","bi-gov":"ed0120ff"}' > "$P/accounts.json"
 H8=${H64:0:8}
 
 refuse() { # <label> <expected message part> <args...>
@@ -60,6 +61,21 @@ a=$("$R" bi "$D" "$P"); b=$("$R" bi "$D" "$P")
 [[ $a == "$b" ]] && ok "render is deterministic" || fail "render differs between runs"
 before=$(find "$T" -type f | sort | xargs cksum)
 "$R" bi "$D" "$P" >/dev/null; [[ $(find "$T" -type f | sort | xargs cksum) == "$before" ]] && ok "writes nothing" || fail "files changed"
+# --mint-enabled (W0b, K6): the BI driver enables POST /mint; caps in an [auditor] table (required keys listen, store_dir, max_rd, max_dfabi, parties: node-build config.rs:96-118)
+for mode in "" "--audit-tls"; do
+  out=$("$R" bi "$D" "$P" $mode --mint-enabled --mint-max-rd 1000000000 --mint-max-dfabi 1000000 2>&1) || { fail "bi $mode --mint-enabled: render failed: $out"; continue; }
+  python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" $([[ -n $mode ]] && echo tls) mint:1000000000:1000000 <<<"$out" || fails=$((fails + 1))
+done
+refuse "--mint-enabled for bank-a (BI only)" "bi" bank-a "$D" "$P" --mint-enabled --mint-max-rd 1 --mint-max-dfabi 1
+refuse "--mint-enabled without caps" "mint-max" bi "$D" "$P" --mint-enabled
+refuse "--mint-enabled with a zero cap" "positive" bi "$D" "$P" --mint-enabled --mint-max-rd 0 --mint-max-dfabi 1
+refuse "--mint-enabled with a non-numeric cap" "positive" bi "$D" "$P" --mint-enabled --mint-max-rd abc --mint-max-dfabi 1
+refuse "--mint-enabled with a cap above 2^63" "positive" bi "$D" "$P" --mint-enabled --mint-max-rd 99999999999999999999 --mint-max-dfabi 1
+refuse "--mint-max-rd without --mint-enabled" "usage" bi "$D" "$P" --mint-max-rd 5
+mkdir "$T/p_acc"; cp "$P/chain_id" "$P/genesis.expected_hash" "$P/peers.json" "$T/p_acc/"; refuse "--mint-enabled without accounts.json" "accounts.json" bi "$D" "$T/p_acc" --mint-enabled --mint-max-rd 1 --mint-max-dfabi 1
+# the plain render must NOT carry mint (checker mutant: a render with mint_enabled but checked as plain)
+"$R" bi "$D" "$P" --mint-enabled --mint-max-rd 5 --mint-max-dfabi 5 | python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" >/dev/null 2>&1 && fail "MUTANT: mint render accepted by the plain checker" || ok "MUTANT: a --mint-enabled render FAILS the plain checker"
+"$R" bi "$D" "$P" --mint-enabled --mint-max-rd 5 --mint-max-dfabi 5 | python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" mint:7:7 >/dev/null 2>&1 && fail "MUTANT: wrong caps accepted" || ok "MUTANT: wrong caps FAIL the mint checker"
 # R17 end step MUTANTS of the rendered driver-egress policy (D2 shape, --audit-tls): each must make the checker FAIL
 dmut() { # <label> <mode: plain|tls> <python statement on policy dict p>
   local good m args=(); [[ $2 == tls ]] && args=(--audit-tls)

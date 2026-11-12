@@ -6,7 +6,8 @@ import tomllib
 
 party, digest, pub, network = sys.argv[1:5]
 audit_tls = len(sys.argv) > 5 and sys.argv[5] == "--audit-tls"
-remote_gw = sys.argv[6:] if audit_tls else []
+mint = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] else ""  # "<max_rd>:<max_dfabi>" (BI only; render.sh validates)
+remote_gw = sys.argv[7:] if audit_tls else []
 same_cluster = ("bi", "bank-a", "bank-b") if party != "bank-c" else ("bank-c",)
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ns = f"rd-iroha3-{party}"
@@ -36,6 +37,7 @@ toml = "\n".join(
         'peers_json = "/config/peers.json"',
         'key_dir = "/keys"',
         f'fee_asset = "{fee}"',
+        *(["mint_enabled = true  # BI only (K6): POST /mint for RD and DFABI up to the caps of [auditor]"] if mint else []),
         'auditor_url = "bi-auditor.rd-iroha3-bi.svc.cluster.local:8090"  # unused by the server mode',
         "",
         "[torii]",
@@ -49,6 +51,9 @@ toml = "\n".join(
         f"rd = {lanes['ds-rd']}",
         f"dfabi = {lanes['ds-dfabi']}",
         "",
+        *(["# K6: per-request mint caps (cfg.auditor.max_rd / max_dfabi); the table needs all of listen, store_dir, max_rd, max_dfabi, parties (node-build config.rs:96-118); listen/store_dir are unused by the server mode",
+           "[auditor]", 'listen = "0.0.0.0:8090"', 'store_dir = "/audit-store"', f"max_rd = {mint.split(':')[0]}", f"max_dfabi = {mint.split(':')[1]}",
+           "parties = [" + ", ".join(json.dumps(json.loads(read('accounts.json'))[q]) for q in PARTIES) + "]", ""] if mint else []),
     ]
     + (
         [
