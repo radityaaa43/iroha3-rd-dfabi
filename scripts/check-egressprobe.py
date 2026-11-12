@@ -85,6 +85,8 @@ if pod:
         need = base + status
         if drole and foreign:  # negative targets of driver-egress: another party's peer Torii and driver
             need += (f"{foreign}-0.{foreign}.rd-iroha3-{foreign}.svc.cluster.local", f"driver.rd-iroha3-{foreign}.svc.cluster.local")
+    if "st() {" in script and 'st() { [ "$(tcp "$1" 8080)" = OPEN ] ||' not in script:
+        bad.append("the status read must be guarded by the timeout-bounded tcp check (an unguarded /dev/tcp connect hangs ~130 s when the policy drops the SYN: the loop must stay ~31 s)")
     for n in need:
         if n not in script:
             bad.append(f"probe loop lacks {n!r}")
