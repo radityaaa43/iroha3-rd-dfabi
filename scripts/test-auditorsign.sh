@@ -129,17 +129,18 @@ fbox() { # <script> <count> -> runs it in a temp tree with a stub kubectl; sets 
   local sc=$1 cnt=$2; local b="$T/fbox"; find "$b" -mindepth 1 -delete 2>/dev/null; mkdir -p "$b/bin" "$b/tmp"
   cat > "$b/bin/kubectl" <<'STUB'
 #!/bin/sh
+# real kubectl output shapes (scripts/fixtures/kubectl-secret-*.txt, captured from kubectl v1.33.3): no trailing newline, names sorted with a trailing space
 case "$*" in
-  *"{{if .data}}"*) echo "$STUB_COUNT" ;;
-  *"{{range"*) echo "tls.key" ;;
-  *patch*) cp "$STUB_PATCH" "$STUB_SEEN" ;;
+  *"{{if .data}}"*) if [ "$STUB_COUNT" = 0 ]; then cat "$STUB_FIX/kubectl-secret-guard-empty.txt"; else cat "$STUB_FIX/kubectl-secret-guard-data.txt"; fi ;;
+  *"{{range"*) cat "$STUB_FIX/kubectl-secret-names-key.txt" ;;
+  *patch*) cp "$STUB_PATCH" "$STUB_SEEN"; printf 'secret/auditor-client-cert patched\n' ;;
 esac
 STUB
   chmod +x "$b/bin/kubectl"
   mkdir -p "$b/work"
   sed "s#/work/#$b/work/#g" "$sc.init" > "$b/init.sh"; sed "s#/tmp/#$b/tmp/#g; s#/work/#$b/work/#g" "$sc" > "$b/job.sh"
   sh "$b/init.sh" > "$T/finit" 2>&1 || { cp "$T/finit" "$T/ferr"; : > "$T/fout"; return 98; }
-  STUB_COUNT=$cnt STUB_PATCH="$b/tmp/patch.json" STUB_SEEN="$b/seen.json" PATH="$b/bin:$PATH" sh "$b/job.sh" > "$T/fout" 2> "$T/ferr"; return $?
+  STUB_FIX="$PWD/scripts/fixtures" STUB_COUNT=$cnt STUB_PATCH="$b/tmp/patch.json" STUB_SEEN="$b/seen.json" PATH="$b/bin:$PATH" sh "$b/job.sh" > "$T/fout" 2> "$T/ferr"; return $?
 }
 mkjob "$kg" "$T/kg.sh"
 if fbox "$T/kg.sh" 0; then
@@ -156,6 +157,18 @@ else
   fail "the keygen script failed on an empty Secret: $(cat "$T/ferr")"
 fi
 if fbox "$T/kg.sh" 1; then fail "the keygen script ran against a NON-empty Secret"; elif grep -q "refusing to overwrite" "$T/ferr" && [[ ! -s $T/fout && ! -e $T/fbox/seen.json ]]; then ok "the keygen script ABORTS on a non-empty Secret (no key made, no patch)"; else fail "abort path wrong: $(cat "$T/ferr")"; fi
+# REAL-SHAPE check (orchestrator rule: stubs reproduce the real tool output): the go-templates of the RENDERED Job scripts, run through the REAL kubectl client-side
+# (create secret --dry-run=client, no cluster), must reproduce the captured fixtures byte for byte
+if command -v kubectl >/dev/null 2>&1; then
+  gt() { grep -o "go-template='[^']*'" "$T/kg.sh" | sed "s/^go-template='//; s/'$//" | sed -n "$1p"; }
+  G1=$(gt 1); G2=$(gt 2)
+  [[ -n $G1 && -n $G2 ]] || fail "could not extract the two go-templates from the rendered keygen script"
+  real() { kubectl create secret generic auditor-client-cert "${@:2}" --dry-run=client -o go-template="$1" 2>/dev/null; }
+  cmp -s <(real "$G1") scripts/fixtures/kubectl-secret-guard-empty.txt && cmp -s <(real "$G1" --from-literal=tls.key=x) scripts/fixtures/kubectl-secret-guard-data.txt && ok "REAL kubectl: the guard template gives the fixtures (empty -> 0, one key -> 1)" || fail "the guard template does not give the captured real shape"
+  cmp -s <(real "$G2" --from-literal=tls.key=x) scripts/fixtures/kubectl-secret-names-key.txt && cmp -s <(real "$G2" --from-literal=tls.key=x --from-literal=tls.crt=y) scripts/fixtures/kubectl-secret-names-two.txt && cmp -s <(real "$G2") scripts/fixtures/kubectl-secret-names-none.txt && ok "REAL kubectl: the names template gives the fixtures (none, one, two keys)" || fail "the names template does not give the captured real shape"
+else
+  echo "skip: kubectl not installed here; the captured fixtures are used by the stub (CI runners have kubectl)"
+fi
 # put stage
 openssl x509 -req -in "$T/pp-bank-a.csr" -CA "$T/ca/ca.crt" -CAkey "$T/ca/ca.key" -CAcreateserial -CAserial "$T/ca/s.srl" -days 30 -extfile <(printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n') -out "$T/leaf-a.crt" 2>/dev/null
 openssl x509 -req -in "$T/pp-bi.csr" -CA "$T/ca/ca.crt" -CAkey "$T/ca/ca.key" -CAcreateserial -CAserial "$T/ca/s.srl" -days 30 -extfile <(printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n') -out "$T/leaf-bi.crt" 2>/dev/null
