@@ -41,6 +41,8 @@ routes += [{"match": m, "route": {"cluster": "driver", "timeout": "60s"}, "typed
            for m in ({"path": "/healthz", "headers": get_only},
                      {"prefix": "/tx/", "headers": get_only},
                      {"path": "/balance", "headers": get_only})]
+# APS all-flows (plan 2026-11-13-04, OPA rows 16-18): the whole /aps/ prefix is the party's OWN driver (intent, address, leg, submit, wallet). A bundle takes ~100-200 s, so 600 s, and idle_timeout 600 s too (envoy's default stream idle timeout is 5 min); OPA decides who may call what.
+routes.append({"match": {"prefix": "/aps/"}, "route": {"cluster": "driver", "timeout": "600s", "idle_timeout": "600s"}, "typed_per_filter_config": per_route})
 # The party's OWN auditor (S12/S13 transport A): other parties reach it only through this gateway. The auditor's code route names:
 # /keys (GET), /approve (POST; a leg approval can take a while), and on BI /records, /records/{bundle} (BI lens). Every auditor error is
 # HTTP 500 by design (driver/src/auditor.rs); OPA decides who may call what.

@@ -14,10 +14,11 @@ jq -n '[ "bi","bank-a","bank-b","bank-c" | {party: ., public_key: ("ea0130" + .)
 jq -n '{"bi":"x","bank-a":"x","bank-b":"x","bank-c":"x","bi-gov":"x"}' > "$P/accounts.json"
 for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
 EI=envoyproxy/envoy@sha256:$(printf 'b%.0s' $(seq 1 64)); OI=openpolicyagent/opa@sha256:$(printf 'c%.0s' $(seq 1 64))
+DX=()  # extra driver render args (the --aps loop below)
 ns_render() { # <party> -> all renders of that namespace on stdout
   local p=$1
   deploy/peers/render.sh --p2p-egress-cidr 198.51.100.7/32 "$p" $H $CIDR
-  echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls
+  echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls ${DX[@]+"${DX[@]}"}
   echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI"
   echo "---"; deploy/auditor/render.sh "$p" "$D" "$P"
   if [[ $p == bi ]]; then echo "---"; deploy/pool-init/render.sh "$D" "$P" 1000 100; fi
@@ -27,6 +28,15 @@ for p in bi bank-a bank-b; do
   roles=(peer=peers-egress driver=driver-egress gateway=gateway-egress auditor=auditor-egress); [[ $p == bi ]] && roles+=(pool-init=pool-init-egress)
   python3 -I "$C" "$p" "${roles[@]}" <<<"$out" || fails=$((fails + 1))
 done
+# --aps (APS all-flows): the driver of every party still has exactly driver-egress selecting it (BI: also the bank-c /32 of the gw-tls sidecar); bank-c as well
+jq -n '{rd: {pool_id: ("7e" * 32), route: "cm91dGU=", policy: "cG9saWN5", governance: "Z292ZXJuYW5jZQ==", origin: [("ab" * 32), ("cd" * 32)], bundles: []}} | .dfabi = .rd' > "$T/pools.json"
+for p in bi bank-a bank-b; do
+  DX=(--aps --aps-pools "$T/pools.json"); [[ $p == bi ]] && DX=(--aps --remote-gw bank-c=203.0.113.30)  # BI keeps its pools on the PVC: no --aps-pools
+  out=$(ns_render "$p" 2>&1) || { fail "$p --aps: a render failed: ${out:0:300}"; continue; }
+  roles=(peer=peers-egress driver=driver-egress gateway=gateway-egress auditor=auditor-egress); [[ $p == bi ]] && roles+=(pool-init=pool-init-egress)
+  python3 -I "$C" "$p-aps" "${roles[@]}" <<<"$out" || fails=$((fails + 1))
+done
+DX=()
 # bank-c (cluster 2): peers + driver + gateway only (no auditor/pool-init there)
 out=$( { deploy/peers/render.sh --cluster 2 --p2p-egress-cidr 198.51.100.7/32 bank-c $H $CIDR; echo "---"; deploy/driver/render.sh bank-c "$D" "$P" --audit-tls --remote-gw bi=203.0.113.20 --remote-gw bank-a=203.0.113.21 --remote-gw bank-b=203.0.113.22; echo "---"; deploy/gateway/render.sh bank-c --envoy-image "$EI" --opa-image "$OI" --cluster 2 --lb-acl acl-x --lb-range 203.0.113.9/32; } 2>&1) || fail "bank-c: a render failed: ${out:0:300}"
 python3 -I "$C" bank-c peer=peers-egress driver=driver-egress gateway=gateway-egress <<<"$out" || fails=$((fails + 1))
