@@ -40,6 +40,11 @@ for l in "${lines[@]}"; do i=$((i + 1)); jq -c '.mint_finality' <<<"$l" > "$W/tr
 export KEEP_TMP=${KEEP_TMP:-} GENESIS_PRIVATE_KEY_FILE="$W/signer/private.key" GENESIS_PUBLIC_KEY="$(tr -d '\n' < "$W/signer/public.key")" PUBLIC_DIR="$P" KEEP_MANIFEST="$W/manifest.json"
 network/assemble-s5.sh 2>"$W/err" && ok "assemble-s5.sh signs" || { { fail "assemble-s5.sh"; sed -E "s/\x1b\[[0-9;]*m//g" "$W/err" | grep -v "^\s*$" | head -25 >&2; echo "FAILED" >&2; exit 1; }; }
 for f in genesis.signed.nrt genesis.expected_hash genesis.public_key chain_id peer.template.toml; do [[ -s $P/$f ]] && ok "wrote $f" || fail "missing $f"; done
+# Live 2026-11-13: the deployed peers kept kura, state and the APS sidecars under the assembler's kagami localnet dir
+# (/dev/shm/iroha3-new/tmp/tmp.X/ln/...) because the template rewrite matched only /work/out/...; every path must be on /storage.
+grep -Eq '^store_dir = "/storage/kura"$' "$P/peer.template.toml" && ok "template: kura store_dir = /storage/kura" || fail "template store_dir: $(grep -m1 '^store_dir' "$P/peer.template.toml")"
+leak=$(grep -nE '"[^"]*/ln/(storage|state)/[^"]*"' "$P/peer.template.toml" | head -3)
+[[ -z $leak ]] && ok "template: no storage/state path under the assembler's localnet dir" || fail "template keeps host storage/state paths: $leak"
 grep -q '^hash:' "$P/genesis.expected_hash" && ok "expected_hash has the hash: form" || fail "expected_hash: $(head -c 80 "$P/genesis.expected_hash")"
 
 m="$W/manifest.json"
