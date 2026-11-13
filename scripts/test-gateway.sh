@@ -84,10 +84,12 @@ for p in bi bank-a bank-b; do
 for d in yaml.safe_load_all(sys.stdin.read()):
     if d and d["metadata"]["name"] == "gateway-envoy":
         rs = json.loads(d["data"]["envoy.yaml"])["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][0]["typed_config"]["route_config"]["virtual_hosts"][0]["routes"]
-        assert any(r["match"] == {"prefix": "/aps/"} and r["route"] == {"cluster": "driver", "timeout": "600s"} for r in rs)' && ok "$p: /aps/ routes to the driver with a 600s timeout" || fail "$p: no /aps/ -> driver 600s route"
+        assert any(r["match"] == {"prefix": "/aps/"} and r["route"] == {"cluster": "driver", "timeout": "600s", "idle_timeout": "600s"} for r in rs)' && ok "$p: /aps/ routes to the driver with a 600s timeout and idle_timeout" || fail "$p: no /aps/ -> driver 600s route"
 done
 rt_mut "the /aps/ route dropped" 'rs[:] = [r for r in rs if r["match"] != {"prefix": "/aps/"}]'
 rt_mut "the /aps/ route timeout 330s" 'next(r for r in rs if r["match"] == {"prefix": "/aps/"})["route"]["timeout"] = "330s"'
+rt_mut "the /aps/ route idle_timeout dropped" 'next(r for r in rs if r["match"] == {"prefix": "/aps/"})["route"].pop("idle_timeout")'
+rt_mut "the /aps/ route idle_timeout 300s" 'next(r for r in rs if r["match"] == {"prefix": "/aps/"})["route"]["idle_timeout"] = "300s"'
 rt_mut "the /aps/ route to torii" 'next(r for r in rs if r["match"] == {"prefix": "/aps/"})["route"]["cluster"] = "torii"'
 rt_mut "the /aps/ route after the default prefix /" 'rs.append(rs.pop(next(i for i, r in enumerate(rs) if r["match"] == {"prefix": "/aps/"})))'
 pol_mut() { # <label> <python statement on the gateway-policy data dict pd>
@@ -103,6 +105,7 @@ print("\n---\n".join(json.dumps(d) for d in docs))' "$2")
 pol_mut "the /transfer row dropped from the shipped policy" 'pd["iroha3.rego"] = pd["iroha3.rego"].replace(", \"/transfer\"", "")'
 pol_mut "a Lensa CA missing from data.json" 'x = json.loads(pd["data.json"]); x["iroha3_config"]["iroha3_ca"]["lensa"].pop("bank-c"); pd["data.json"] = json.dumps(x)'
 pol_mut "the APS rows 16-18 dropped from the shipped policy" 'pd["iroha3.rego"] = pd["iroha3.rego"].replace("/aps/submit", "/aps/x")'
+pol_mut "the APS row 19 dropped from the shipped policy" 'pd["iroha3.rego"] = pd["iroha3.rego"].replace("/aps/bundles", "/aps/x")'
 pol_mut "the policy ConfigMap without data.json" 'pd.pop("data.json")'
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"

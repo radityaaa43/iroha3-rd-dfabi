@@ -178,6 +178,14 @@ rows := [
 		"allow": [{"roles": banks, "nodes": ["bi"]}],
 		"deny": [{"roles": banks, "nodes": ["bank-a", "bank-b", "bank-c"]}],
 	},
+	{
+		"row": 19, "method": "GET", "paths": ["/aps/bundles"],
+		"allow": [{"roles": banks, "nodes": ["bi"]}],
+		"deny": [
+			{"roles": banks, "nodes": ["bank-a", "bank-b", "bank-c"]},
+			{"roles": ["lensa", "bi"], "nodes": nodes},
+		],
+	},
 ]
 
 # Row 15: the three auditor nodes (bank-c runs no auditor).
@@ -206,6 +214,11 @@ test_aps_routes_are_exact if {
 			not allowed(n, r, "POST", "/aps/unknown")
 			not allowed(n, r, "POST", "/x/aps/submit")
 			not allowed(n, r, "POST", "/aps/leg\n")
+			not allowed(n, r, "POST", "/aps/bundles")
+			not allowed(n, r, "GET", "/aps/bundles?x=1")
+			not allowed(n, r, "GET", "/aps/bundles/")
+			not allowed(n, r, "GET", "/aps/bundles/x")
+			not allowed(n, r, "DELETE", "/aps/bundles")
 		}
 	}
 }
@@ -221,6 +234,20 @@ test_aps_party_routes_are_not_lensa_or_bank if {
 			not allowed(n, role, "POST", "/aps/intent")
 			not allowed(n, role, "GET", "/aps/wallet")
 		}
+	}
+}
+
+# Row 19: a bank's driver reads the bundle index from the BI gateway only; nobody else, at no other node.
+test_aps_bundles_only_banks_at_bi if {
+	every role in banks {
+		allowed("bi", role, "GET", "/aps/bundles")
+		every n in banks {
+			not allowed(n, role, "GET", "/aps/bundles")
+		}
+	}
+	every n in nodes {
+		not allowed(n, "lensa", "GET", "/aps/bundles")
+		not allowed(n, "bi", "GET", "/aps/bundles")
 	}
 }
 

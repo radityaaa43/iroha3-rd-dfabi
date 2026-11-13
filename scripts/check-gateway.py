@@ -95,8 +95,8 @@ if cm:
                 if got != want_routes:
                     bad.append(f"envoy: routes before the default must be exactly {want_routes} (exact paths, in order), got {got}")
                 for r in routes[:-1]:
-                    if r["match"] == {"prefix": "/aps/"} and r["route"].get("timeout") != "600s":
-                        bad.append(f"envoy: the /aps/ route timeout must be 600s, got {r['route'].get('timeout')}")
+                    if r["match"] == {"prefix": "/aps/"} and (r["route"].get("timeout") != "600s" or r["route"].get("idle_timeout") != "600s"):
+                        bad.append(f"envoy: the /aps/ route timeout and idle_timeout must both be 600s (the default stream idle timeout is 5 min), got {r['route'].get('timeout')} {r['route'].get('idle_timeout')}")
                 last = routes[-1]
                 if last["match"] != {"prefix": "/"} or last["route"]["cluster"] != "torii":
                     bad.append(f"envoy: last route must be prefix / -> torii, got {last['match']} {last['route']['cluster']}")

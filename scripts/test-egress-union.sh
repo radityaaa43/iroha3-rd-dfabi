@@ -31,7 +31,7 @@ done
 # --aps (APS all-flows): the driver of every party still has exactly driver-egress selecting it (BI: also the bank-c /32 of the gw-tls sidecar); bank-c as well
 jq -n '{rd: {pool_id: ("7e" * 32), route: "cm91dGU=", policy: "cG9saWN5", governance: "Z292ZXJuYW5jZQ==", origin: [("ab" * 32), ("cd" * 32)], bundles: []}} | .dfabi = .rd' > "$T/pools.json"
 for p in bi bank-a bank-b; do
-  DX=(--aps --aps-pools "$T/pools.json"); [[ $p == bi ]] && DX+=(--remote-gw bank-c=203.0.113.30)
+  DX=(--aps --aps-pools "$T/pools.json"); [[ $p == bi ]] && DX=(--aps --remote-gw bank-c=203.0.113.30)  # BI keeps its pools on the PVC: no --aps-pools
   out=$(ns_render "$p" 2>&1) || { fail "$p --aps: a render failed: ${out:0:300}"; continue; }
   roles=(peer=peers-egress driver=driver-egress gateway=gateway-egress auditor=auditor-egress); [[ $p == bi ]] && roles+=(pool-init=pool-init-egress)
   python3 -I "$C" "$p-aps" "${roles[@]}" <<<"$out" || fails=$((fails + 1))

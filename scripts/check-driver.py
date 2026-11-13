@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Check rendered S17 driver manifests on stdin. Usage: check-driver.py <party> <digest> <hash8> <chain-id> [tls [<remote /32>...] [gw:<party>=<ip>...]] [mint:<max_rd>:<max_dfabi>] [aps:<pools.json>]
+"""Check rendered S17 driver manifests on stdin. Usage: check-driver.py <party> <digest> <hash8> <chain-id> [tls [<remote /32>...] [gw:<party>=<ip>...]] [mint:<max_rd>:<max_dfabi>] [aps:<pools.json>|aps:pvc]
 (mint:… = rendered with --mint-enabled: the BI driver enables POST /mint; caps in the [auditor] table, parties from accounts.json;
 gw:<party>=<ip> = rendered with --remote-gw (bank-c): [tls.resolve] host -> ip:8443 and the same ip as a /32 ipBlock in driver-egress;
-aps:<pools.json> = rendered with --aps --aps-pools <pools.json> (needs tls): coordinator driver at BI, coordinator_url at the banks; for BI gw:bank-c=<ip> is the bank-c gateway-lb address, NOT a [tls.resolve] entry)"""
+aps:<pools.json> = a bank rendered with --aps --aps-pools <pools.json> (needs tls): coordinator_url, ConfigMap aps-pools = that file with bundles forced to [];
+aps:pvc = the BI driver rendered with --aps (no pools file): coordinator, the PVC pools-index rw at /pools, key_dir /pools/keys with the Secret keys linked in; for BI gw:bank-c=<ip> is the bank-c gateway-lb address, NOT a [tls.resolve] entry)"""
 import json
 import sys
 import tomllib
@@ -35,11 +36,11 @@ def need(kind, name):
     return d
 
 
-want_n = (6 if tlsmode else 5) + (1 + (party == "bi") if aps is not None else 0)
+want_n = (6 if tlsmode else 5) + (1 if aps is not None else 0)  # bank: ConfigMap aps-pools; BI: ConfigMap driver-gw-envoy (its pools are the PVC)
 if aps and not tlsmode:
     bad.append("--aps needs --audit-tls (the coordinator and the party drivers talk through the gateways)")
 if len(docs) != want_n:
-    bad.append(f"want exactly {want_n} objects (ConfigMap driver-config, {'ConfigMap gateway-server-cas, ' if tlsmode else ''}{'ConfigMap aps-pools, ' if aps else ''}{'ConfigMap driver-gw-envoy, ' if aps and party == 'bi' else ''}Deployment, Service, NetworkPolicy{' x2 (ingress + egress)' if tlsmode else ''}), got {len(docs)}: {sorted(by)}")
+    bad.append(f"want exactly {want_n} objects (ConfigMap driver-config, {'ConfigMap gateway-server-cas, ' if tlsmode else ''}{'ConfigMap aps-pools, ' if aps and party != 'bi' else ''}{'ConfigMap driver-gw-envoy, ' if aps and party == 'bi' else ''}Deployment, Service, NetworkPolicy{' x2 (ingress + egress)' if tlsmode else ''}), got {len(docs)}: {sorted(by)}")
 for (k, n), d in by.items():
     if d["metadata"].get("namespace") != ns:
         bad.append(f"{k} {n} is in namespace {d['metadata'].get('namespace')}, want {ns}")
@@ -56,7 +57,7 @@ if cm:
         cfg = tomllib.loads(cm["data"]["rd-dfabi.toml"])
         want = {
             "chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "client_toml": "/client/client.toml",
-            "peers_json": "/config/peers.json", "key_dir": "/keys", "fee_asset": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            "peers_json": "/config/peers.json", "key_dir": "/pools/keys" if aps is not None and party == "bi" else "/keys", "fee_asset": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         }
         for k, v in want.items():
             if cfg.get(k) != v:
@@ -202,14 +203,29 @@ if dep:
         if inits or "pools" in vols or "aps-pools" in vols or "/pools" in mounts:
             bad.append(f"initContainers / pools volumes only with --aps: {[i['name'] for i in inits]}")
     else:
-        # ConfigMap aps-pools is read-only but settle() rewrites pools_file in place (pools.rs update: lock file + rename, receipts dir beside it): an init container copies it into the
-        # emptyDir /pools, and pools_file points there.
-        if vols.get("aps-pools") != {"name": "aps-pools", "configMap": {"name": "aps-pools"}} or "emptyDir" not in vols.get("pools", {}):
-            bad.append(f"volumes aps-pools (ConfigMap aps-pools) and pools (emptyDir) are required: {vols.get('aps-pools')} {vols.get('pools')}")
-        seed = [i for i in inits if i["name"] == "pools-seed"]
-        if len(seed) != 1 or seed[0].get("image") != c["image"] or "restartPolicy" in seed[0] or "cp /aps-pools/pools.json /pools/pools.json" not in json.dumps(seed[0].get("command")) \
-                or {m["mountPath"]: m.get("readOnly", False) for m in seed[0].get("volumeMounts", [])} != {"/aps-pools": True, "/pools": False}:
-            bad.append(f"initContainer pools-seed (driver image, copies /aps-pools/pools.json to /pools/pools.json, /aps-pools read-only): {seed}")
+        if party == "bi":
+            # BI (lead decision): the live pool index and BI's reserve notes are on the PVC pools-index (deploy/pool-init), rw at /pools; the Secret's bi.seed and bi.note are LINKED into
+            # /pools/keys (deploy/aps-run pattern), never copied onto the disk; RWO volume, so the pod is replaced Recreate-style. No ConfigMap, no copy.
+            if vols.get("pools") != {"name": "pools", "persistentVolumeClaim": {"claimName": "pools-index"}} or "aps-pools" in vols:
+                bad.append(f"BI --aps: volume pools must be the PVC pools-index (no aps-pools ConfigMap volume): {vols.get('pools')} {vols.get('aps-pools')}")
+            if dep["spec"].get("strategy") != {"type": "Recreate"}:
+                bad.append(f"BI --aps: Deployment strategy must be Recreate (RWO PVC): {dep['spec'].get('strategy')}")
+            link = [i for i in inits if i["name"] == "pools-link"]
+            cmd = json.dumps(link[0].get("command")) if link else ""
+            ln = lambda k: f"test -L /pools/keys/{k} || ln -s /keys/{k} /pools/keys/{k}"
+            if len(link) != 1 or link[0].get("image") != c["image"] or "restartPolicy" in link[0] or ln("bi.seed") not in cmd or ln("bi.note") not in cmd or "test -f /pools/pools.json" not in cmd \
+                    or "cp " in cmd or {m["mountPath"]: m.get("readOnly", False) for m in link[0].get("volumeMounts", [])} != {"/keys": True, "/pools": False} \
+                    or {m["mountPath"]: m["name"] for m in link[0].get("volumeMounts", [])} != {"/keys": "keys", "/pools": "pools"}:
+                bad.append(f"BI --aps: initContainer pools-link (driver image; test -L ... || ln -s /keys/bi.seed and bi.note into /pools/keys, never cp; /keys read-only, /pools rw): {link}")
+        else:
+            # ConfigMap aps-pools is read-only but settle() rewrites pools_file in place (pools.rs update: lock file + rename, receipts dir beside it): an init container copies it into the
+            # emptyDir /pools, and pools_file points there.
+            if vols.get("aps-pools") != {"name": "aps-pools", "configMap": {"name": "aps-pools"}} or "emptyDir" not in vols.get("pools", {}):
+                bad.append(f"volumes aps-pools (ConfigMap aps-pools) and pools (emptyDir) are required: {vols.get('aps-pools')} {vols.get('pools')}")
+            seed = [i for i in inits if i["name"] == "pools-seed"]
+            if len(seed) != 1 or seed[0].get("image") != c["image"] or "restartPolicy" in seed[0] or "cp /aps-pools/pools.json /pools/pools.json" not in json.dumps(seed[0].get("command")) \
+                    or {m["mountPath"]: m.get("readOnly", False) for m in seed[0].get("volumeMounts", [])} != {"/aps-pools": True, "/pools": False}:
+                bad.append(f"initContainer pools-seed (driver image, copies /aps-pools/pools.json to /pools/pools.json, /aps-pools read-only): {seed}")
         if mounts.get("/pools", {}).get("name") != "pools" or mounts["/pools"].get("readOnly"):
             bad.append("driver mount /pools (volume pools) must be writable")
         sc = [i for i in inits if i["name"] == "gw-tls"]
@@ -217,8 +233,8 @@ if dep:
             if len(sc) != 1 or sc[0].get("restartPolicy") != "Always" or sc[0].get("image") != ENVOY:
                 bad.append(f"BI --aps: initContainer gw-tls must be a native sidecar (restartPolicy Always) of the pinned envoy image: {sc}")
             else:
-                if [i["name"] for i in inits] != ["pools-seed", "gw-tls"]:
-                    bad.append(f"BI --aps: initContainers must be pools-seed then gw-tls: {[i['name'] for i in inits]}")
+                if [i["name"] for i in inits] != ["pools-link", "gw-tls"]:
+                    bad.append(f"BI --aps: initContainers must be pools-link then gw-tls: {[i['name'] for i in inits]}")
                 smounts = {m["mountPath"]: m for m in sc[0]["volumeMounts"]}
                 for mp in ("/config", "/server-cas", "/client"):
                     if mp not in smounts or smounts[mp].get("readOnly") is not True:
@@ -227,9 +243,9 @@ if dep:
                     bad.append(f"gw-tls mounts: {sc[0]['volumeMounts']}")
                 if vols.get("envoy-config") != {"name": "envoy-config", "configMap": {"name": "driver-gw-envoy"}} or "emptyDir" not in vols.get("tmp", {}):
                     bad.append("gw-tls needs volumes envoy-config (ConfigMap driver-gw-envoy) and tmp (emptyDir)")
-                s = sc[0]["securityContext"]
-                if not (s["allowPrivilegeEscalation"] is False and s["readOnlyRootFilesystem"] is True and s["capabilities"] == {"drop": ["ALL"]}):
-                    bad.append(f"gw-tls container hardening: {s}")
+                sx = sc[0]["securityContext"]
+                if not (sx["allowPrivilegeEscalation"] is False and sx["readOnlyRootFilesystem"] is True and sx["capabilities"] == {"drop": ["ALL"]}):
+                    bad.append(f"gw-tls container hardening: {sx}")
         elif sc:
             bad.append("gw-tls sidecar is for the BI coordinator only")
 
@@ -281,17 +297,22 @@ if aps is None:
     if ap is not None or ("ConfigMap", "driver-gw-envoy") in by:
         bad.append("ConfigMaps aps-pools / driver-gw-envoy only with --aps")
 else:
-    want_pools = json.load(open(aps))
-    if ap is None:
-        bad.append("missing ConfigMap aps-pools")
-    elif set(ap["data"]) != {"pools.json"}:
-        bad.append(f"aps-pools keys: {sorted(ap['data'])}, want ['pools.json']")
+    if party == "bi":
+        if ap is not None:
+            bad.append("BI --aps: no ConfigMap aps-pools (the pools are the PVC pools-index)")
     else:
-        got = json.loads(ap["data"]["pools.json"])
-        # node-build driver/src/pools.rs PoolFile / PoolRecord: exactly {rd, dfabi}, each {pool_id, route, policy, governance, origin, bundles}; the values are the operator's public input, never invented here
-        rec = {"pool_id", "route", "policy", "governance", "origin", "bundles"}
-        if got != want_pools or set(got) != {"rd", "dfabi"} or any(set(v) != rec for v in got.values()):
-            bad.append(f"aps-pools pools.json must be the given public pools file with exactly rd/dfabi records of {sorted(rec)}: {sorted(got)}")
+        want_pools = json.load(open(aps))
+        for r in want_pools.values():
+            r["bundles"] = []  # the bank driver fetches the bundle index from BI at runtime (T2): the seed never carries one
+        if ap is None:
+            bad.append("missing ConfigMap aps-pools")
+        elif set(ap["data"]) != {"pools.json"}:
+            bad.append(f"aps-pools keys: {sorted(ap['data'])}, want ['pools.json']")
+        else:
+            got = json.loads(ap["data"]["pools.json"])
+            rec = {"pool_id", "route", "policy", "governance", "origin", "bundles"}
+            if got != want_pools or set(got) != {"rd", "dfabi"} or any(set(v) != rec for v in got.values()):
+                bad.append(f"aps-pools pools.json must be the given public pools file (bundles []) with exactly rd/dfabi records of {sorted(rec)}: {sorted(got)}")
     gwe = by.get(("ConfigMap", "driver-gw-envoy"))
     if party == "bi":
         if gwe is None or set(gwe["data"]) != {"envoy.yaml"}:
