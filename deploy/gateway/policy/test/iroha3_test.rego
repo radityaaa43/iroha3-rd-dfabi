@@ -153,10 +153,89 @@ rows := [
 		"allow": [{"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": auditor_nodes}],
 		"deny": [{"roles": ["lensa"], "nodes": nodes}, {"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": ["bank-c"]}],
 	},
+	{
+		"row": 16, "method": "POST", "paths": ["/aps/intent"],
+		"allow": [{"roles": ["lensa"], "nodes": nodes}],
+		"deny": [{"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": nodes}],
+	},
+	{
+		"row": 16, "method": "GET", "paths": ["/aps/wallet"],
+		"allow": [{"roles": ["lensa"], "nodes": nodes}],
+		"deny": [{"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": nodes}],
+	},
+	{
+		"row": 16, "method": "POST", "paths": ["/aps/submit"],
+		"allow": [{"roles": ["lensa"], "nodes": nodes}],
+		"deny": [{"roles": ["bi"], "nodes": nodes}],
+	},
+	{
+		"row": 17, "method": "POST", "paths": ["/aps/address", "/aps/leg"],
+		"allow": [{"roles": ["bi"], "nodes": nodes}],
+		"deny": [{"roles": ["lensa", "bank-a", "bank-b", "bank-c"], "nodes": nodes}],
+	},
+	{
+		"row": 18, "method": "POST", "paths": ["/aps/submit"],
+		"allow": [{"roles": banks, "nodes": ["bi"]}],
+		"deny": [{"roles": banks, "nodes": ["bank-a", "bank-b", "bank-c"]}],
+	},
 ]
 
 # Row 15: the three auditor nodes (bank-c runs no auditor).
 auditor_nodes := ["bi", "bank-a", "bank-b"]
+
+# Rows 16-18 are exact: another method, a query, a trailing slash, a sub-path or an unknown /aps/ route never passes for any role at any node.
+test_aps_routes_are_exact if {
+	every n in nodes {
+		every r in all_roles {
+			not allowed(n, r, "GET", "/aps/intent")
+			not allowed(n, r, "GET", "/aps/submit")
+			not allowed(n, r, "POST", "/aps/wallet")
+			not allowed(n, r, "GET", "/aps/address")
+			not allowed(n, r, "GET", "/aps/leg")
+			not allowed(n, r, "PUT", "/aps/submit")
+			not allowed(n, r, "DELETE", "/aps/intent")
+			not allowed(n, r, "POST", "/aps/intent?x=1")
+			not allowed(n, r, "POST", "/aps/submit?x=1")
+			not allowed(n, r, "GET", "/aps/wallet?x=1")
+			not allowed(n, r, "POST", "/aps/address?x=1")
+			not allowed(n, r, "POST", "/aps/leg?x=1")
+			not allowed(n, r, "POST", "/aps/submit/")
+			not allowed(n, r, "POST", "/aps/intent/x")
+			not allowed(n, r, "POST", "/aps/")
+			not allowed(n, r, "POST", "/aps")
+			not allowed(n, r, "POST", "/aps/unknown")
+			not allowed(n, r, "POST", "/x/aps/submit")
+			not allowed(n, r, "POST", "/aps/leg\n")
+		}
+	}
+}
+
+# Lensa never reaches the coordinator-to-party routes (row 17), a bank never reaches them or the Lensa-only routes (row 16).
+test_aps_party_routes_are_not_lensa_or_bank if {
+	every n in nodes {
+		not allowed(n, "lensa", "POST", "/aps/address")
+		not allowed(n, "lensa", "POST", "/aps/leg")
+		every role in banks {
+			not allowed(n, role, "POST", "/aps/address")
+			not allowed(n, role, "POST", "/aps/leg")
+			not allowed(n, role, "POST", "/aps/intent")
+			not allowed(n, role, "GET", "/aps/wallet")
+		}
+	}
+}
+
+# Row 18: a bank's driver forwards /aps/submit to the BI gateway only (the coordinator); BI itself submits as lensa (row 16), never as role bi.
+test_aps_bank_submit_only_at_bi if {
+	every role in banks {
+		allowed("bi", role, "POST", "/aps/submit")
+		every n in banks {
+			not allowed(n, role, "POST", "/aps/submit")
+		}
+	}
+	every n in nodes {
+		not allowed(n, "bi", "POST", "/aps/submit")
+	}
+}
 
 # Row 15 is exact: other methods, a query, a sub-path or BI's /records never pass for any role at any node.
 test_auditor_routes_are_exact if {

@@ -127,5 +127,78 @@ for mode in plain tls; do
   dmut "an extra port 443 on the Torii rule" $mode 'p["spec"]["egress"][1]["ports"].append({"protocol": "TCP", "port": 443})'
 done
 dmut "the gateway rule missing from the --audit-tls policy" tls 'p["spec"]["egress"].pop()'
+# --aps (APS all-flows, plan 2026-11-13-04): ConfigMap aps-pools from the operator's PUBLIC pools.json, [aps] (BI coordinator, banks coordinator_url), pools-seed init container, 2Gi/3Gi, BI gw-tls sidecar
+PL="$T/pools.json"
+jq -n --arg a "$(printf '7e%.0s' $(seq 1 32))" --arg b "$(printf 'e6%.0s' $(seq 1 32))" --arg o1 "$(printf 'ab%.0s' $(seq 1 32))" --arg o2 "$(printf 'cd%.0s' $(seq 1 32))" \
+  '[$a, $b] | map({pool_id: ., route: "cm91dGU=", policy: "cG9saWN5", governance: "Z292ZXJuYW5jZQ==", origin: [$o1, $o2], bundles: []}) | {rd: .[0], dfabi: .[1]}' > "$PL"
+APS=(--aps --aps-pools "$PL"); BCGW=203.0.113.30
+for p in bank-a bank-b; do
+  out=$("$R" "$p" "$D" "$P" --audit-tls "${APS[@]}" 2>&1) || { fail "$p --aps: render failed: $out"; continue; }
+  python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls "aps:$PL" <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
+done
+for mode in "" "mint"; do  # BI: the coordinator, with and without the mint caps
+  margs=(); mtok=(); [[ -n $mode ]] && { margs=(--mint-enabled --mint-max-rd 1000000000 --mint-max-dfabi 1000000); mtok=(mint:1000000000:1000000); }
+  out=$("$R" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW "${margs[@]}" 2>&1) || { fail "bi --aps $mode: render failed: $out"; continue; }
+  python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" tls "gw:bank-c=$BCGW" "aps:$PL" "${mtok[@]}" <<<"$out" || fails=$((fails + 1))
+  python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
+done
+out=$("$R" bank-c "$D" "$P" --audit-tls "${GW[@]}" "${APS[@]}" 2>&1) || fail "bank-c --aps: render failed: $out"
+python3 -I scripts/check-driver.py bank-c "$D" "$H8" "$CHAIN" tls "${GWT[@]}" "aps:$PL" <<<"$out" || fails=$((fails + 1))
+python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
+a=$("$R" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW); b=$("$R" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW)
+[[ -n $a && $a == "$b" ]] && ok "the --aps render is deterministic" || fail "the --aps render differs between runs or is empty"
+refuse "--aps without --audit-tls" "audit-tls" bank-a "$D" "$P" "${APS[@]}"
+refuse "--aps without --aps-pools" "aps-pools" bank-a "$D" "$P" --audit-tls --aps
+refuse "--aps-pools without --aps" "usage" bank-a "$D" "$P" --audit-tls --aps-pools "$PL"
+refuse "--aps with a missing pools file" "not found" bank-a "$D" "$P" --audit-tls --aps --aps-pools "$T/none.json"
+refuse "BI --aps without --remote-gw bank-c" "bank-c" bi "$D" "$P" --audit-tls "${APS[@]}"
+refuse "BI --aps with a private bank-c address" "public" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=10.0.0.5
+refuse "BI --aps with a second --remote-gw party" "bank-c=<ipv4> only" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW --remote-gw bank-a=203.0.113.21
+refuse "--remote-gw bank-c=<ip> for BI without --aps" "driver only" bi "$D" "$P" --audit-tls --remote-gw bank-c=$BCGW
+refuse "--remote-gw bank-c=<ip> for a bank" "bi, bank-a or bank-b" bank-a "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW
+refuse "bank-c --aps with --remote-gw bank-c" "bi, bank-a or bank-b" bank-c "$D" "$P" --audit-tls "${APS[@]}" "${GW[@]}" --remote-gw bank-c=$BCGW
+for spec in 'a pools file with an extra secret field|.rd.seed = "x"' 'a pools file without dfabi|del(.dfabi)' 'a pools file with a third pool|.x = .rd' 'a pool_id that is not 64 hex|.rd.pool_id = "7e"' 'a pools file without origin|del(.rd.origin)' 'a pools file with 3 origin commitments|.rd.origin += ["ab"]'; do
+  label=${spec%%|*}; filter=${spec#*|}
+  jq "$filter" "$PL" > "$T/bad.json"
+  err=$("$R" bank-a "$D" "$P" --audit-tls --aps --aps-pools "$T/bad.json" 2>&1 >/dev/null); rc=$?
+  [[ $rc -eq 2 && $err == *"Pool"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused as expected (rc=$rc: $err)"
+done
+apsmut() { # <label> <party> <python statement on the rendered docs list>
+  local p=$2 good m rargs=(--audit-tls "${APS[@]}") cargs=(tls)
+  [[ $p == bi ]] && { rargs+=(--remote-gw bank-c=$BCGW); cargs+=("gw:bank-c=$BCGW"); }
+  good=$("$R" "$p" "$D" "$P" "${rargs[@]}")
+  m=$(python3 -I -c '
+import sys, json, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
+exec(sys.argv[1])
+print("\n---\n".join(json.dumps(d) for d in docs))' "$3" <<<"$good") || { fail "MUTANT $1: the mutation script itself failed"; return; }
+  python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" "${cargs[@]}" "aps:$PL" <<<"$m" >/dev/null 2>&1 && fail "MUTANT $1 passed the driver checker" || ok "MUTANT: $1 FAILS the driver checker (--aps $p)"
+}
+DEP='dep = next(d for d in docs if d["kind"] == "Deployment"); ps = dep["spec"]["template"]["spec"]; '
+CFG='cfg = next(d for d in docs if d["metadata"]["name"] == "driver-config"); '
+GWE='gwe = next(d for d in docs if d["metadata"]["name"] == "driver-gw-envoy"); e = json.loads(gwe["data"]["envoy.yaml"]); '
+apsmut "the driver memory limit 1Gi" bank-a "$DEP"'ps["containers"][0]["resources"]["limits"]["memory"] = "1Gi"'
+apsmut "the driver memory request 64Mi" bank-a "$DEP"'ps["containers"][0]["resources"]["requests"]["memory"] = "64Mi"'
+apsmut "the pools-seed init container dropped" bank-a "$DEP"'ps.pop("initContainers")'
+apsmut "ConfigMap aps-pools missing" bank-a 'docs[:] = [d for d in docs if d["metadata"]["name"] != "aps-pools"]'
+apsmut "a secret field in aps-pools" bank-a 'a = next(d for d in docs if d["metadata"]["name"] == "aps-pools"); p = json.loads(a["data"]["pools.json"]); p["rd"]["seed"] = "x"; a["data"]["pools.json"] = json.dumps(p)'
+apsmut "a pool id changed in aps-pools" bank-a 'a = next(d for d in docs if d["metadata"]["name"] == "aps-pools"); p = json.loads(a["data"]["pools.json"]); p["rd"]["pool_id"] = "0" * 64; a["data"]["pools.json"] = json.dumps(p)'
+apsmut "/pools mounted read-only" bank-a "$DEP"'next(m for m in ps["containers"][0]["volumeMounts"] if m["mountPath"] == "/pools")["readOnly"] = True'
+apsmut "a bank rendered as the coordinator" bank-a "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("coordinator_url = \"https://gateway.rd-iroha3-bi.svc.cluster.local:8443\"", "coordinator = true")'
+apsmut "the BI coordinator_url pointing at another gateway" bank-a "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("gateway.rd-iroha3-bi.svc", "gateway.rd-iroha3-bank-a.svc")'
+apsmut "the BI driver without coordinator = true" bi "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("coordinator = true", "coordinator = false")'
+apsmut "the BI driver [torii] left on the direct Torii (no sidecar path)" bi "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("http://127.0.0.1:18104/", "http://bank-c-0.bank-c.rd-iroha3-bank-c.svc.cluster.local:8080/")'
+apsmut "the BI gw-tls sidecar dropped" bi "$DEP"'ps["initContainers"] = [i for i in ps["initContainers"] if i["name"] != "gw-tls"]'
+apsmut "the BI gw-tls sidecar a plain init container (no restartPolicy Always)" bi "$DEP"'next(i for i in ps["initContainers"] if i["name"] == "gw-tls").pop("restartPolicy")'
+apsmut "the BI gw-tls sidecar on a loopback port that is not 18101-18104" bi "$GWE"'e["static_resources"]["listeners"][3]["address"]["socket_address"]["port_value"] = 18199; gwe["data"]["envoy.yaml"] = json.dumps(e)'
+apsmut "the BI gw-tls listener on 0.0.0.0" bi "$GWE"'e["static_resources"]["listeners"][0]["address"]["socket_address"]["address"] = "0.0.0.0"; gwe["data"]["envoy.yaml"] = json.dumps(e)'
+apsmut "the BI gw-tls bank-c upstream not the --remote-gw address" bi "$GWE"'gwe["data"]["envoy.yaml"] = gwe["data"]["envoy.yaml"].replace("203.0.113.30", "203.0.113.99")'
+apsmut "the BI driver-egress without the bank-c /32" bi 'e = next(d for d in docs if d["metadata"]["name"] == "driver-egress"); e["spec"]["egress"][2]["to"].pop()'
+apsmut "the BI driver-egress with an extra ipBlock" bi 'e = next(d for d in docs if d["metadata"]["name"] == "driver-egress"); e["spec"]["egress"][2]["to"].append({"ipBlock": {"cidr": "8.8.8.8/32"}})'
+apsmut "a gw-tls sidecar on a bank driver" bank-a "$DEP"'ps["initContainers"].append({"name": "gw-tls", "image": "x", "restartPolicy": "Always"})'
+# the plain render must NOT carry --aps, and an --aps render is not a plain one
+"$R" bank-a "$D" "$P" --audit-tls | python3 -I scripts/check-driver.py bank-a "$D" "$H8" "$CHAIN" tls "aps:$PL" >/dev/null 2>&1 && fail "MUTANT: a plain render passed the --aps checker" || ok "MUTANT: a plain render FAILS the --aps checker"
+"$R" bank-a "$D" "$P" --audit-tls "${APS[@]}" | python3 -I scripts/check-driver.py bank-a "$D" "$H8" "$CHAIN" tls >/dev/null 2>&1 && fail "MUTANT: an --aps render passed the plain checker" || ok "MUTANT: an --aps render FAILS the plain checker"
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"

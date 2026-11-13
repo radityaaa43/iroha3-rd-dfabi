@@ -86,12 +86,17 @@ if cm:
                 driver_reads = [({"path": "/healthz", "headers": get_only}, "driver"),
                                 ({"prefix": "/tx/", "headers": get_only}, "driver"),
                                 ({"path": "/balance", "headers": get_only}, "driver")]
-                want_routes = [({"path": p}, "driver") for p in driver_paths] + driver_reads + [({"path": p}, "auditor") for p in auditor_exact]
+                # APS all-flows (plan 2026-11-13-04, OPA rows 16-18): the whole /aps/ prefix goes to the party's OWN driver (a bundle takes ~100-200 s: timeout 600 s, checked below)
+                aps = [({"prefix": "/aps/"}, "driver")]
+                want_routes = [({"path": p}, "driver") for p in driver_paths] + driver_reads + aps + [({"path": p}, "auditor") for p in auditor_exact]
                 if party == "bi":
                     want_routes.append(({"prefix": "/records/"}, "auditor"))
                 got = [(r["match"], r["route"]["cluster"]) for r in routes[:-1]]
                 if got != want_routes:
                     bad.append(f"envoy: routes before the default must be exactly {want_routes} (exact paths, in order), got {got}")
+                for r in routes[:-1]:
+                    if r["match"] == {"prefix": "/aps/"} and r["route"].get("timeout") != "600s":
+                        bad.append(f"envoy: the /aps/ route timeout must be 600s, got {r['route'].get('timeout')}")
                 last = routes[-1]
                 if last["match"] != {"prefix": "/"} or last["route"]["cluster"] != "torii":
                     bad.append(f"envoy: last route must be prefix / -> torii, got {last['match']} {last['route']['cluster']}")
