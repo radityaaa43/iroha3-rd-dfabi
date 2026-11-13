@@ -46,7 +46,11 @@ if aps_pools:
             print(f"render.sh: {aps_pools}: {k} record is not a PoolRecord (pool_id 64 lowercase hex, route/policy/governance base64, origin 2 hex commitments, bundles list)", file=sys.stderr)
             sys.exit(2)
         r["bundles"] = []  # the bank driver fetches the bundle index from BI at runtime (T2): the seed never carries one
-aps_coordinator = aps and party == "bi"  # BI keeps its pools on the PVC pools-index (render.sh refuses --aps-pools there)
+aps_coordinator = aps and party == "bi"
+if aps_coordinator:
+    aps_accounts = {q: json.loads(read("accounts.json"))[q] for q in PARTIES}
+    if len(set(aps_accounts.values())) != len(PARTIES):
+        sys.exit("render.sh: accounts.json: the four parties must have distinct account keys ([aps.peers] is keyed by account)")  # BI keeps its pools on the PVC pools-index (render.sh refuses --aps-pools there)
 ENVOY = "envoyproxy/envoy@sha256:b1f389c3a6148e85e9de364cb867aa2e5802153abb37ad80f1f2241d693da32a"  # the gateways' pinned envoy (same as deploy/aps-run/render.py)
 labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
 role = {**labels, "rd-iroha3/role": "driver"}
@@ -79,7 +83,9 @@ toml = "\n".join(
         f"dfabi = {lanes['ds-dfabi']}",
         "",
         *(["# APS coordinator = the BI driver only; a bank forwards POST /aps/submit to the BI gateway over mTLS (bank-c resolves the host through [tls.resolve])",
-           "[aps]", *(["coordinator = true"] if aps_coordinator else ['coordinator_url = "https://gateway.rd-iroha3-bi.svc.cluster.local:8443"']), ""] if aps else []),
+           "[aps]", *(["coordinator = true", "",
+                       "# [aps.peers] (node-build T2): each party's ACCOUNT public key (accounts.json) -> its gateway URL, bi included; bank-c keeps the in-cluster host (SNI/SAN), pinned to its gateway-lb ip by [tls.resolve]",
+                       "[aps.peers]", *[f'"{aps_accounts[q]}" = "https://gateway.rd-iroha3-{q}.svc.cluster.local:8443"' for q in PARTIES]] if aps_coordinator else ['coordinator_url = "https://gateway.rd-iroha3-bi.svc.cluster.local:8443"']), ""] if aps else []),
         *(["# K6: per-request mint caps (cfg.auditor.max_rd / max_dfabi); the table needs all of listen, store_dir, max_rd, max_dfabi, parties (node-build config.rs:96-118); listen/store_dir are unused by the server mode",
            "[auditor]", 'listen = "0.0.0.0:8090"', 'store_dir = "/audit-store"', f"max_rd = {mint.split(':')[0]}", f"max_dfabi = {mint.split(':')[1]}",
            "parties = [" + ", ".join(json.dumps(json.loads(read('accounts.json'))[q]) for q in PARTIES) + "]", ""] if mint else []),
@@ -96,7 +102,9 @@ toml = "\n".join(
             'client_key = "/tls/client/tls.key"',
             'server_ca_dir = "/tls/cas"',
             *(["", "# cluster 2 cannot resolve the cluster-1 gateway names: host -> ip:port (node-build tls_http.rs:53-55); the leaf SAN still matches the host",
-               "[tls.resolve]", *[f'"gateway.rd-iroha3-{q}.svc.cluster.local" = "{gw_ip[q]}:8443"' for q in ("bi", "bank-a", "bank-b")]] if gw_ip else []),
+               "[tls.resolve]", *[f'"gateway.rd-iroha3-{q}.svc.cluster.local" = "{gw_ip[q]}:8443"' for q in ("bi", "bank-a", "bank-b")]] if gw_ip else
+               ["", "# BI --aps: the bank-c gateway is on the other cluster: host -> its gateway-lb ip (same ip as the gw-tls upstream and the driver-egress /32); the leaf SAN still matches the host",
+                "[tls.resolve]", f'"gateway.rd-iroha3-bank-c.svc.cluster.local" = "{bankc_ip}:8443"'] if aps_coordinator and bankc_ip else []),
             "",
         ]
         if audit_tls
