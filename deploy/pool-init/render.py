@@ -50,10 +50,10 @@ toml = "\n".join(
         f"rd = {lanes['ds-rd']}",
         f"dfabi = {lanes['ds-dfabi']}",
         "",
-        "# 2-of-3 auditors (BI, org A, org B), each reached ONLY through its own party's gateway over mutual TLS (S13 transport A)",
+        "# BI is the only auditor (user 2026-11-13, R1): reached ONLY through the BI gateway over mutual TLS (S13 transport A)",
         "[audit]",
-        "min_approvals = 2",
-        "auditor_urls = [" + ", ".join(json.dumps(f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443") for p in ("bi", "bank-a", "bank-b")) + "]",
+        "min_approvals = 1",
+        'auditor_urls = ["https://gateway.rd-iroha3-bi.svc.cluster.local:8443"]',
         "",
         "[tls]",
         'client_cert = "/tls/client/tls.crt"',
@@ -76,6 +76,8 @@ script = " && ".join(
         f"rd-dfabi keys client-toml /work bi-gov --torii {bi_torii} --chain {chain} --network-id-file /genesis/genesis.expected_hash",
         "rm -f /work/bi-gov.seed",
         f"rd-dfabi pool-init /config/rd-dfabi.toml --rd-reserve {rd_reserve} --dfabi-reserve {dfabi_reserve}",
+        # public pool records (ids, route, policy, governance, origin commitments; no note, no key) for the banks' aps-pools ConfigMap
+        "printf 'pools_public_json=%s\\n' \"$(tr -d '\\n ' < /pools/pools.json)\"",
     ]
 )
 gateway = lambda p: {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"rd-iroha3-{p}"}},
@@ -89,13 +91,13 @@ egress_policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", 
                   "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
                  # BI's own Torii (the governance transaction)
                  {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": "bi"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
-                 # the three auditor gateways (mutual TLS), nothing else
-                 {"to": [gateway(p) for p in ("bi", "bank-a", "bank-b")], "ports": [{"protocol": "TCP", "port": 8443}]},
+                 # the BI auditor gateway (mutual TLS), nothing else
+                 {"to": [gateway("bi")], "ports": [{"protocol": "TCP", "port": 8443}]},
              ]}}
 docs = [
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("pool-init-config"),
      "data": {"rd-dfabi.toml": toml, "peers.json": json.dumps(peers, indent=2) + "\n"}},
-    {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": meta("pools-index"),
+    {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": meta("pools-v2"),
      "spec": {"storageClassName": "alicloud-essd-wffc", "accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}},
     {"apiVersion": "batch/v1", "kind": "Job", "metadata": {**meta("pool-init"), "labels": locked},
      "spec": {
@@ -137,7 +139,7 @@ docs = [
                                                     "items": [{"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"}]}},
                  {"name": "server-cas", "configMap": {"name": "gateway-server-cas"}},
                  {"name": "work", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}},
-                 {"name": "pools", "persistentVolumeClaim": {"claimName": "pools-index"}},
+                 {"name": "pools", "persistentVolumeClaim": {"claimName": "pools-v2"}},
              ],
          }},
      }},

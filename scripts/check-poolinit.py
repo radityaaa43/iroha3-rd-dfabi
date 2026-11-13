@@ -11,7 +11,7 @@ ns = "rd-iroha3-bi"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 bad = []
-want = {("ConfigMap", "pool-init-config"), ("PersistentVolumeClaim", "pools-index"), ("Job", "pool-init"), ("NetworkPolicy", "pool-init-egress")}
+want = {("ConfigMap", "pool-init-config"), ("PersistentVolumeClaim", "pools-v2"), ("Job", "pool-init"), ("NetworkPolicy", "pool-init-egress")}
 if set(by) != want or len(docs) != 4:
     bad.append(f"objects: want exactly {sorted(want)}, got {sorted(by)}")
 for (k, n), d in by.items():
@@ -29,7 +29,7 @@ if any(k == "Secret" for k, _ in by):
 cm = by.get(("ConfigMap", "pool-init-config"))
 if cm:
     cfg = tomllib.loads(cm["data"]["rd-dfabi.toml"])
-    urls = [f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443" for p in ("bi", "bank-a", "bank-b")]
+    urls = ["https://gateway.rd-iroha3-bi.svc.cluster.local:8443"]
     want_cfg = {"chain": chain, "network_id_file": "/genesis/genesis.expected_hash", "party": "bi", "client_toml": "/work/client.toml",
                 "key_dir": "/pools/keys", "pools_file": "/pools/pools.json"}
     for k, v in want_cfg.items():
@@ -42,8 +42,9 @@ if cm:
         bad.append(f"rd-dfabi.toml lacks required Config fields {missing}")
     elif cfg["account_domain"] != "wonderland.universal":
         bad.append(f"rd-dfabi.toml account_domain = {cfg['account_domain']!r}, want 'wonderland.universal' (as the auditor and driver configs)")
-    if cfg.get("audit") != {"min_approvals": 2, "auditor_urls": urls}:
-        bad.append(f"[audit] must be 2-of-3 through the three gateways: {cfg.get('audit')}")
+    if cfg.get("audit") != {"min_approvals": 1, "auditor_urls": urls}:
+        # user 2026-11-13 "BI satu-satunya auditor": R1, no bank auditor reads other parties' legs
+        bad.append(f"[audit] must be BI only (1-of-1) through the BI gateway: {cfg.get('audit')}")
     if cfg.get("tls") != {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}:
         bad.append(f"[tls]: {cfg.get('tls')}")
     if cfg.get("assets") != {"rd": "7onbjg2gRXveoAAUFsohCZyGW98t", "dfabi": "4mBWK1JCwQdHLDPpuVKc56eLsXka"}:
@@ -53,9 +54,9 @@ if cm:
     if cfg.get("mint_enabled"):
         bad.append("mint_enabled must not be set on the pool-init config")
 
-pvc = by.get(("PersistentVolumeClaim", "pools-index"))
+pvc = by.get(("PersistentVolumeClaim", "pools-v2"))
 if pvc and (pvc["spec"]["resources"]["requests"]["storage"] != "1Gi" or pvc["spec"]["accessModes"] != ["ReadWriteOnce"]):
-    bad.append("PVC pools-index: 1Gi ReadWriteOnce")
+    bad.append("PVC pools-v2: 1Gi ReadWriteOnce")
 
 job = by.get(("Job", "pool-init"))
 if job:
@@ -89,7 +90,7 @@ if job:
             bad.append(f"command lacks {need!r} (origin notes on the PVC, bi.note linked only)")
     if "cp /keys" in cmd or "install -m 600 /keys" in cmd:
         bad.append("bi.note must not be copied onto the PVC")
-    for need in ("keys client-toml /work bi-gov", "--network-id-file /genesis/genesis.expected_hash", "pool-init /config/rd-dfabi.toml", f"--rd-reserve {rd}", f"--dfabi-reserve {dfabi}", "rm -f /work/bi-gov.seed"):
+    for need in ("keys client-toml /work bi-gov", "--network-id-file /genesis/genesis.expected_hash", "pool-init /config/rd-dfabi.toml", f"--rd-reserve {rd}", f"--dfabi-reserve {dfabi}", "rm -f /work/bi-gov.seed", "pools_public_json="):
         if need not in cmd:
             bad.append(f"command lacks {need!r}")
     vols = {v["name"]: v for v in pod["volumes"]}
@@ -103,8 +104,8 @@ if job:
             bad.append("bi-keys: ONLY bi.note (the BI seed stays out of this Job), mode 0400")
     if vols.get("work", {}).get("emptyDir") is None:
         bad.append("work must be an emptyDir (the derived client.toml never persists)")
-    if vols.get("pools", {}).get("persistentVolumeClaim", {}).get("claimName") != "pools-index":
-        bad.append("pools must be PVC pools-index")
+    if vols.get("pools", {}).get("persistentVolumeClaim", {}).get("claimName") != "pools-v2":
+        bad.append("pools must be PVC pools-v2 (BI-only policy pools; the 2-of-3 pools stay on pools-index)")
     if vols.get("server-cas", {}).get("configMap", {}).get("name") != "gateway-server-cas":
         bad.append("server-cas must be the existing ConfigMap gateway-server-cas (driver render --audit-tls)")
     for m in c["volumeMounts"]:
@@ -122,7 +123,7 @@ if np:
                  "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
          "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
         {"to": [{"podSelector": {"matchLabels": {"rd-iroha3/role": "peer", "rd-iroha3/party": "bi"}}}], "ports": [{"protocol": "TCP", "port": 8080}]},
-        {"to": [gw(p) for p in ("bi", "bank-a", "bank-b")], "ports": [{"protocol": "TCP", "port": 8443}]},
+        {"to": [gw("bi")], "ports": [{"protocol": "TCP", "port": 8443}]},
     ]
     if sp.get("podSelector") != {"matchLabels": {"rd-iroha3/role": "pool-init", "rd/egress-locked": "true"}}:
         bad.append(f"NetworkPolicy pool-init-egress podSelector: {sp.get('podSelector')}")

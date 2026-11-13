@@ -3,7 +3,7 @@
 (mint:… = rendered with --mint-enabled: the BI driver enables POST /mint; caps in the [auditor] table, parties from accounts.json;
 gw:<party>=<ip> = rendered with --remote-gw (bank-c): [tls.resolve] host -> ip:8443 and the same ip as a /32 ipBlock in driver-egress;
 aps:<pools.json> = a bank rendered with --aps --aps-pools <pools.json> (needs tls): coordinator_url, ConfigMap aps-pools = that file with bundles forced to [];
-aps:pvc = the BI driver rendered with --aps (no pools file): coordinator, the PVC pools-index rw at /pools, key_dir /pools/keys with the Secret keys linked in; for BI gw:bank-c=<ip> is the bank-c gateway-lb address, NOT a [tls.resolve] entry)"""
+aps:pvc = the BI driver rendered with --aps (no pools file): coordinator, the PVC pools-v2 rw at /pools, key_dir /pools/keys with the Secret keys linked in; for BI gw:bank-c=<ip> is the bank-c gateway-lb address, NOT a [tls.resolve] entry)"""
 import json
 import sys
 import tomllib
@@ -73,10 +73,10 @@ if cm:
         if aps is None and bankc_gw:
             bad.append("--remote-gw bank-c=<ip> only with --aps (BI)")
         accounts = {"bi": "ed0120bb", "bank-a": "ed0120cc", "bank-b": "ed0120dd", "bank-c": "ed0120ee"}  # fixture values of test-driver.sh (accounts.json)
-        urls = [f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443" for p in ("bi", "bank-a", "bank-b")]
+        urls = ["https://gateway.rd-iroha3-bi.svc.cluster.local:8443"]
         if tlsmode:
-            if cfg.get("audit") != {"min_approvals": 2, "auditor_urls": urls}:
-                bad.append(f"[audit] must be 2-of-3 through the three gateways {urls}: {cfg.get('audit')}")
+            if cfg.get("audit") != {"min_approvals": 1, "auditor_urls": urls}:
+                bad.append(f"[audit] must be BI only (1-of-1) through the BI gateway {urls}: {cfg.get('audit')}")
             want_tls = {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}
             if gw:  # the in-cluster names do not resolve on the other cluster: the driver gets host -> ip:port (node-build tls_http.rs:53-55); SAN of the gateway leaf stays gateway.rd-iroha3-<p>.svc[.cluster.local]
                 want_tls["resolve"] = {f"gateway.rd-iroha3-{q}.svc.cluster.local": f"{gw[q]}:8443" for q in ("bi", "bank-a", "bank-b")}
@@ -207,10 +207,10 @@ if dep:
             bad.append(f"initContainers / pools volumes only with --aps: {[i['name'] for i in inits]}")
     else:
         if party == "bi":
-            # BI (lead decision): the live pool index and BI's reserve notes are on the PVC pools-index (deploy/pool-init), rw at /pools; the Secret's bi.seed and bi.note are LINKED into
+            # BI (lead decision): the live pool index and BI's reserve notes are on the PVC pools-v2 (deploy/pool-init), rw at /pools; the Secret's bi.seed and bi.note are LINKED into
             # /pools/keys (deploy/aps-run pattern), never copied onto the disk; RWO volume, so the pod is replaced Recreate-style. No ConfigMap, no copy.
-            if vols.get("pools") != {"name": "pools", "persistentVolumeClaim": {"claimName": "pools-index"}} or "aps-pools" in vols:
-                bad.append(f"BI --aps: volume pools must be the PVC pools-index (no aps-pools ConfigMap volume): {vols.get('pools')} {vols.get('aps-pools')}")
+            if vols.get("pools") != {"name": "pools", "persistentVolumeClaim": {"claimName": "pools-v2"}} or "aps-pools" in vols:
+                bad.append(f"BI --aps: volume pools must be the PVC pools-v2 (no aps-pools ConfigMap volume): {vols.get('pools')} {vols.get('aps-pools')}")
             if dep["spec"].get("strategy") != {"type": "Recreate"}:
                 bad.append(f"BI --aps: Deployment strategy must be Recreate (RWO PVC): {dep['spec'].get('strategy')}")
             link = [i for i in inits if i["name"] == "pools-link"]
@@ -302,7 +302,7 @@ if aps is None:
 else:
     if party == "bi":
         if ap is not None:
-            bad.append("BI --aps: no ConfigMap aps-pools (the pools are the PVC pools-index)")
+            bad.append("BI --aps: no ConfigMap aps-pools (the pools are the PVC pools-v2)")
     else:
         want_pools = json.load(open(aps))
         for r in want_pools.values():

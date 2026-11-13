@@ -9,7 +9,7 @@
 # note secret the pool funding needs; the BI seed and the auditor keys are never mounted. backoffLimit 0: a failed run is NOT retried.
 # NetworkPolicy pool-init-egress (R17, key-mounting Job): the Job carries rd/egress-locked=true and may reach ONLY cluster DNS, BI's own Torii (8080)
 # and the three gateways (8443); everything else is denied (our namespaces have no allow-all egress policy to exclude it from).
-# PVC pools-index (1Gi) holds pools.json (public data, single writer = BI; S15 reuses it). Reserves are explicit amounts, no default.
+# PVC pools-v2 (1Gi) holds pools.json (public data, single writer = BI; S15 reuses it). Reserves are explicit amounts, no default.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 usage() { echo "usage: render.sh <sha256:<64 hex> image digest> <public-dir> <rd-reserve> <dfabi-reserve>" >&2; exit 2; }
