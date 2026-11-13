@@ -11,7 +11,7 @@ H64=$(printf '0123456789abcdef%.0s' 1 2 3 4)
 P="$T/public"; mkdir -p "$P/gateway-ca"
 echo 11111111-2222-4333-8444-555555555555 > "$P/chain_id"; printf 'hash:%s#ABCD\n' "${H64^^}" > "$P/genesis.expected_hash"
 jq -n '[ "bi","bank-a","bank-b","bank-c" | {party: ., public_key: ("ea0130" + .), pop_hex: "0xaa"} ]' > "$P/peers.json"
-jq -n '{"bi":"x","bank-a":"x","bank-b":"x","bank-c":"x","bi-gov":"x"}' > "$P/accounts.json"
+jq -n '{"bi":"ed0120b1","bank-a":"ed0120b2","bank-b":"ed0120b3","bank-c":"ed0120b4","bi-gov":"ed0120b5"}' > "$P/accounts.json"
 for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
 EI=envoyproxy/envoy@sha256:$(printf 'b%.0s' $(seq 1 64)); OI=openpolicyagent/opa@sha256:$(printf 'c%.0s' $(seq 1 64))
 DX=()  # extra driver render args (the --aps loop below)

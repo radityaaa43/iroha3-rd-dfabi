@@ -72,6 +72,7 @@ if cm:
             bad.append("BI --aps needs gw:bank-c=<ip> (the gateway-lb of bank-c: the sidecar reaches its Torii through it)")
         if aps is None and bankc_gw:
             bad.append("--remote-gw bank-c=<ip> only with --aps (BI)")
+        accounts = {"bi": "ed0120bb", "bank-a": "ed0120cc", "bank-b": "ed0120dd", "bank-c": "ed0120ee"}  # fixture values of test-driver.sh (accounts.json)
         urls = [f"https://gateway.rd-iroha3-{p}.svc.cluster.local:8443" for p in ("bi", "bank-a", "bank-b")]
         if tlsmode:
             if cfg.get("audit") != {"min_approvals": 2, "auditor_urls": urls}:
@@ -79,6 +80,8 @@ if cm:
             want_tls = {"client_cert": "/tls/client/tls.crt", "client_key": "/tls/client/tls.key", "server_ca_dir": "/tls/cas"}
             if gw:  # the in-cluster names do not resolve on the other cluster: the driver gets host -> ip:port (node-build tls_http.rs:53-55); SAN of the gateway leaf stays gateway.rd-iroha3-<p>.svc[.cluster.local]
                 want_tls["resolve"] = {f"gateway.rd-iroha3-{q}.svc.cluster.local": f"{gw[q]}:8443" for q in ("bi", "bank-a", "bank-b")}
+            if aps is not None and party == "bi" and bankc_gw:  # BI --aps: the bank-c gateway is on the other cluster: host -> ip:8443 (tls_http.rs [tls.resolve]); the same ip as the sidecar upstream and the /32
+                want_tls["resolve"] = {"gateway.rd-iroha3-bank-c.svc.cluster.local": f"{bankc_gw}:8443"}
             if cfg.get("tls") != want_tls:
                 bad.append(f"[tls]: {cfg.get('tls')}")
         elif "audit" in cfg or "tls" in cfg:
@@ -89,7 +92,8 @@ if cm:
                 bad.append(f"rd-dfabi.toml pools_file = {cfg.get('pools_file')!r}, want '/pools/pools.json'")
             if cm["data"]["rd-dfabi.toml"].index("pools_file") > cm["data"]["rd-dfabi.toml"].index("["):
                 bad.append("pools_file must be a TOP-LEVEL key (before the first table)")
-            want_aps = {"coordinator": True} if party == "bi" else {"coordinator_url": COORD_URL}
+            # BI [aps.peers] (node-build T2 config.rs ApsConfig.peers): each party's ACCOUNT public key (accounts.json) -> its gateway URL, bi itself included; bank-c keeps the in-cluster host (SNI/SAN), pinned to its LB ip by [tls.resolve] above
+            want_aps = {"coordinator": True, "peers": {accounts[q]: f"https://gateway.rd-iroha3-{q}.svc.cluster.local:8443" for q in ("bi", "bank-a", "bank-b", "bank-c")}} if party == "bi" else {"coordinator_url": COORD_URL}
             if cfg.get("aps") != want_aps:
                 bad.append(f"[aps] must be {want_aps}: {cfg.get('aps')}")
             if party == "bi":  # settle() uses plain-HTTP iroha client calls to all four committee Torii: through the gw-tls sidecar on loopback 18101..18104
@@ -97,7 +101,6 @@ if cm:
                     bad.append(f"BI --aps: [torii] must be the gw-tls loopback ports 18101-18104: {cfg.get('torii')}")
         elif "pools_file" in cfg or "aps" in cfg:
             bad.append("pools_file / [aps] only with --aps")
-        accounts = {"bi": "ed0120bb", "bank-a": "ed0120cc", "bank-b": "ed0120dd", "bank-c": "ed0120ee"}  # fixture values of test-driver.sh (accounts.json)
         if mint:
             _, mrd, mdf = mint.split(":")
             want_aud = {"listen": "0.0.0.0:8090", "store_dir": "/audit-store", "max_rd": int(mrd), "max_dfabi": int(mdf),
