@@ -293,8 +293,14 @@ def cmd_template(a):
     t["genesis"] = {"file": "/genesis/genesis.signed.nrt", "expected_hash_file": "/genesis/genesis.expected_hash",
                     "public_key": a.genesis_public_key}
     text = to_toml(t)
-    text = re.sub(r"/work/out/[^/\"]+/storage/peer\d+", "/storage/kura", text)
-    text = re.sub(r"/work/out/[^/\"]+/state/peer\d+", "/storage/state", text)
+    # kagami localnet writes absolute paths under its --out-dir (assemble-s5.sh: $tmp/ln = /dev/shm/iroha3-new/tmp/tmp.X/ln, not
+    # /work/out/...): rewrite ANY quoted path ending in /storage/peerN or /state/peerN. Live 2026-11-13: the old /work/out-only rewrite
+    # left kura, state and the APS sidecars of all four peers in the container's /dev/shm instead of the PVC /storage.
+    text = re.sub(r'"[^"\n]*/storage/peer\d+', '"/storage/kura', text)
+    text = re.sub(r'"[^"\n]*/state/peer\d+', '"/storage/state', text)
+    leftover = sorted(set(re.findall(r'"([^"\n]*' + re.escape(str(a.localnet).rstrip("/")) + r'[^"\n]*)"', text)))
+    if leftover:
+        raise SystemExit(f"s5.py template: paths under the localnet dir remain: {leftover[:3]}")
     text = text.replace(ids["old_gen"], ids["gen"]).replace(ids["old_client"], ids["bi"])
     text = text.replace(old_gen_pk, a.genesis_public_key)
     t = tomllib.loads(text)

@@ -13,7 +13,7 @@
 # bank-c also gets memory request 512Mi (cluster 2 is full; "GO resize" 2026-11-12): CPU request 250m and the limits 2000m/3Gi stay.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-clb="" c2="" egress=()
+clb="" c2="" egress=() state_root=""
 # prefix flags in any order: --clb-health-cidr 100.64.0.0/10 | --cluster 2 | --p2p-egress-cidr <ipv4>/32 (repeatable)
 while (( $# )); do
   case $1 in
@@ -23,6 +23,11 @@ while (( $# )); do
     --cluster)
       [[ ${2:-} == 2 ]] || { echo "usage: render.sh [--cluster 2] <party> <genesis-hash8> <cidr>" >&2; exit 2; }
       c2=1; shift 2 ;;
+    --state-root)
+      # the live peer.toml (a Secret with the keys) points kura, state and the APS sidecars at the assembler's kagami localnet dir;
+      # this mounts the PVC there too (subPath shm-ln) so they persist. Only that dir form is accepted.
+      [[ ${2:-} =~ ^/dev/shm/iroha3-new/tmp/tmp\.[A-Za-z0-9]+/ln$ ]] || { echo "render.sh: --state-root must be the assembler localnet dir /dev/shm/iroha3-new/tmp/tmp.<id>/ln: got '${2:-}'" >&2; exit 2; }
+      state_root=$2; shift 2 ;;
     --p2p-egress-cidr)
       [[ -n ${2:-} ]] || { echo "usage: render.sh --p2p-egress-cidr <ipv4>/32 ... (value missing)" >&2; exit 2; }
       [[ $2 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ && $2 != 0.0.0.0/32 ]] || { echo "render.sh: --p2p-egress-cidr must be a single IPv4 /32 (the OTHER cluster's external LB address), never wider: got '$2'" >&2; exit 2; }
@@ -47,6 +52,7 @@ fi
 tel='"rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"' # the cluster-1 peers poll each other's Torii (telemetry); bank-c has none (below)
 p2pns=$tel; [[ $party == bank-c ]] && p2pns='"rd-iroha3-bank-c"' # P2P from same-cluster peers: exact namespace names (form ruling), never a part-of label wildcard
 sed -e "s|@P2P_NS@|$p2pns|g" -e "s|@TELEMETRY_NS@|$tel|g" -e "s|@PARTY@|$party|g" -e "s|@GENESIS_HASH8@|$hash8|g" -e "s|@BANKC_LB_CIDR@|$cidr|g" "$here/peer.yaml.tpl" |
+  awk -v sr="$state_root" '{ print } /^              subPath: data$/ && sr { print "            - name: data"; print "              mountPath: " sr; print "              subPath: shm-ln" }' |
   awk -v clb="$clb" '/^@CLB_HEALTH@$/ { if (clb) { print "        - ipBlock:"; print "            cidr: \"100.64.0.0/10\"" } next } { print }' |
   awk -v c2="$c2" '
     /^        # @TELEMETRY-BEGIN@$/ { if (c2) skip_t = 1; next }
