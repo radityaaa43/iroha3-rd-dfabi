@@ -9,6 +9,7 @@ flags = sys.argv[4:]
 clb = "clb" in flags  # --clb-health-cidr 100.64.0.0/10 requested
 egress_cidrs = [f.split(":", 1)[1].split(",") for f in flags if f.startswith("egress:")]
 egress_cidrs = egress_cidrs[0] if egress_cidrs else []  # --p2p-egress-cidr values (the OTHER cluster's LB /32 addresses)
+state_root = next((f.split(":", 1)[1] for f in flags if f.startswith("state-root:")), None)  # --state-root (2026-11-13 live peers)
 c2 = "c2" in flags  # --cluster 2 (bank-c): no PriorityClass, no cluster-1 node exclusion, StorageClass fabricx-essd (WaitForFirstConsumer)
 ns = f"rd-iroha3-{party}"
 docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d]
@@ -139,5 +140,16 @@ else:
         bad.append(f"peers-egress: selector role=peer, Egress only: {sp.get('podSelector')} {sp.get('policyTypes')}")
     if sp.get("egress") != want_eg:
         bad.append(f"peers-egress rules differ from DNS + P2P 1337 (same-cluster ns + other-cluster /32) + Torii 8080 (same-cluster ns): {sp.get('egress')}")
+if sts:
+    mounts = sts["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if {"name": "data", "mountPath": "/storage", "subPath": "data"} not in mounts:
+        bad.append("the PVC data must stay mounted at /storage (subPath data)")
+    shm = [m for m in mounts if m["mountPath"].startswith("/dev/shm")]
+    # the live peer.toml (Secret, keys inside) points kura/state/sidecars at the assembler's localnet dir; --state-root puts that dir on the PVC
+    want = [{"name": "data", "mountPath": state_root, "subPath": "shm-ln"}] if state_root else []
+    if shm != want:
+        bad.append(f"/dev/shm mounts must be exactly {want}: {shm}")
+if bad:
+    print("\n".join(f"FAIL: {party}: {b}" for b in bad), file=sys.stderr)
 print(f"{'FAIL' if bad else 'ok:  '} {party}: {len(docs)} objects")
 sys.exit(1 if bad else 0)
