@@ -3,7 +3,7 @@
 # ConfigMap driver-config (public values only), Deployment driver, Service driver, NetworkPolicy driver-ingress. Writes nothing,
 # calls no cluster, renders NO Secret: the bank creates Secret `<party>-keys` (<party>.seed, <party>.note, client.toml) itself with its
 # own kubeconfig. The image is pinned by digest; the pod pulls it with the imagePullSecret `ghcr-pull` of the namespace.
-#   deploy/driver/render.sh <bi|bank-a|bank-b|bank-c> <sha256:digest> <public-dir> [--audit-tls] [--mint-enabled --mint-max-rd N --mint-max-dfabi N]
+#   deploy/driver/render.sh <bi|bank-a|bank-b|bank-c> <sha256:digest> <public-dir> [--audit-tls] [--mint-enabled --mint-max-rd N --mint-max-dfabi N] [--aps --aps-pools <pools.json>]
 # --mint-enabled (BI only, K6/W0b): emits `mint_enabled = true` (top-level) and an [auditor] table with the per-request mint caps (+ the 4 trading accounts as `parties`; listen/store_dir are required
 # by the config when the table is present and unused by the server mode), so POST /mint answers instead of 403. Caps have no default (K6 D2: equal to the S13 reserves).
 # --audit-tls also renders NetworkPolicy driver-egress (R17: DNS, the own party's Torii 8080, the gateways on 8443: same-cluster ones by namespace
@@ -14,14 +14,19 @@
 # --remote-gw <party>=<ipv4> (repeatable; bank-c ONLY, and --audit-tls on bank-c requires all three of bi, bank-a, bank-b): the cluster-1 auditors' gateways are not resolvable from
 # cluster 2, so the config gets `[tls.resolve]` "gateway.rd-iroha3-<party>.svc.cluster.local" = "<ip>:8443" (node-build tls_http.rs:53-55; the gateway leaf SAN stays that name) and the SAME
 # ip as a /32 ipBlock in driver-egress, so the two cannot drift. <ip> = the external gateway-lb address of that party, read at apply time, never committed.
+# --aps --aps-pools <pools.json> (APS all-flows, plan 2026-11-13-04; needs --audit-tls): ConfigMap aps-pools carries the PUBLIC pool records you give (node-build pools.rs PoolFile: rd and dfabi, each
+# pool_id, route, policy, governance, origin, bundles; the file is shape-checked, nothing is invented), copied by an init container into the writable /pools and set as `pools_file`; `[aps]` in
+# rd-dfabi.toml: BI `coordinator = true`, a bank `coordinator_url` = the BI gateway (bank-c resolves it through [tls.resolve]); driver memory 2Gi/3Gi (prover ~1.1 GiB RSS). The BI driver also
+# gets the native sidecar `gw-tls` (loopback 18101-18104 -> the four gateways, mTLS; deploy/aps-run pattern) and its [torii] points there; that needs the gateway-lb address of bank-c:
+# --remote-gw bank-c=<ipv4> (BI + --aps ONLY; also a /32 in driver-egress, so the sidecar upstream and the NetworkPolicy cannot drift).
 # <public-dir> (network/public or ~/iroha3-new/public) holds chain_id, genesis.expected_hash (names ConfigMap genesis-<hash8>) and
 # peers.json; it must hold no private material. bank-c (cluster 2) renders the same objects: no zone or node pin anywhere.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "usage: render.sh bi|bank-a|bank-b|bank-c <sha256:<64 hex> image digest> <public-dir> [--audit-tls [--remote-gw-cidr <ipv4>/32]... [--remote-gw bi|bank-a|bank-b=<ipv4>]...] [--mint-enabled --mint-max-rd <n> --mint-max-dfabi <n>]" >&2; exit 2; }
+usage() { echo "usage: render.sh bi|bank-a|bank-b|bank-c <sha256:<64 hex> image digest> <public-dir> [--audit-tls [--remote-gw-cidr <ipv4>/32]... [--remote-gw bi|bank-a|bank-b=<ipv4>]...] [--mint-enabled --mint-max-rd <n> --mint-max-dfabi <n>] [--aps --aps-pools <pools.json> (BI: with --remote-gw bank-c=<ipv4>)]" >&2; exit 2; }
 (( $# >= 3 )) || usage
 party=$1 digest=$2 pub=$3; shift 3
-tls="" remote=() gw=() mint="" mrd="" mdf=""
+tls="" remote=() gw=() mint="" mrd="" mdf="" aps="" apools=""
 positive() { [[ $1 =~ ^[1-9][0-9]{0,18}$ ]] && (( ${#1} < 19 || $1 <= 9223372036854775807 )) 2>/dev/null; }
 while (( $# )); do
   case $1 in
@@ -32,20 +37,31 @@ while (( $# )); do
       remote+=("$2"); shift 2 ;;
     --remote-gw)
       [[ -n $tls && $# -ge 2 ]] || usage
-      [[ $2 =~ ^(bi|bank-a|bank-b)=(.+)$ ]] || { echo "render.sh: --remote-gw must be <bi, bank-a or bank-b>=<ipv4>: got '$2'" >&2; exit 2; }
+      [[ $2 =~ ^(bi|bank-a|bank-b)=(.+)$ || ( $party == bi && $2 =~ ^(bank-c)=(.+)$ ) ]] || { echo "render.sh: --remote-gw must be <bi, bank-a or bank-b>=<ipv4>: got '$2'" >&2; exit 2; }
       gp=${BASH_REMATCH[1]} gi=${BASH_REMATCH[2]}
       [[ $gi =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "render.sh: --remote-gw $gp needs a plain ipv4 address (no mask, no name): got '$gi'" >&2; exit 2; }
       [[ $gi =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|0\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.) ]] && { echo "render.sh: --remote-gw $gp must be a public address (the external gateway-lb), not $gi" >&2; exit 2; }
       for g in ${gw[@]+"${gw[@]}"}; do [[ ${g%%=*} != "$gp" ]] || { echo "render.sh: --remote-gw $gp given twice" >&2; exit 2; }; done
       gw+=("$gp=$gi"); shift 2 ;;
+    --aps) [[ -z $aps ]] || usage; aps=1; shift ;;
+    --aps-pools) [[ $# -ge 2 && -z $apools ]] || usage; apools=$2; shift 2 ;;
     --mint-enabled) [[ -z $mint ]] || usage; mint=1; shift ;;
     --mint-max-rd) [[ $# -ge 2 ]] || usage; mrd=$2; shift 2 ;;
     --mint-max-dfabi) [[ $# -ge 2 ]] || usage; mdf=$2; shift 2 ;;
     *) usage ;;
   esac
 done
+if [[ -n $aps ]]; then
+  [[ -n $tls ]] || { echo "render.sh: --aps needs --audit-tls (the coordinator and the party drivers talk through the gateways over mTLS)" >&2; exit 2; }
+  [[ -f $apools ]] || { echo "render.sh: --aps needs --aps-pools <pools.json> (the public pool records; file not found: '$apools')" >&2; exit 2; }
+  [[ $party != bi || " ${gw[*]-} " == *" bank-c="* ]] || { echo "render.sh: BI --aps needs --remote-gw bank-c=<ipv4> (the gateway-lb of bank-c: the gw-tls sidecar reaches its Torii through it)" >&2; exit 2; }
+elif [[ -n $apools ]]; then usage; fi
 if (( ${#gw[@]} )); then
-  [[ $party == bank-c ]] || { echo "render.sh: --remote-gw is for the bank-c driver only (cluster 1 resolves the gateways by name); got $party" >&2; exit 2; }
+  if [[ $party == bi && -n $aps ]]; then
+    [[ ${#gw[@]} -eq 1 && ${gw[0]} == bank-c=* ]] || { echo "render.sh: --remote-gw for the BI driver is bank-c=<ipv4> only (cluster 1 resolves the other gateways by name)" >&2; exit 2; }
+  else
+    [[ $party == bank-c ]] || { echo "render.sh: --remote-gw is for the bank-c driver only (cluster 1 resolves the gateways by name); got $party" >&2; exit 2; }
+  fi
 fi
 if [[ -n $tls && $party == bank-c ]]; then
   for q in bi bank-a bank-b; do
@@ -67,4 +83,4 @@ if [[ -n $tls ]]; then
   for q in bi bank-a bank-b bank-c; do [[ -f $pub/gateway-ca/$q-server-ca.pem ]] || { echo "render.sh: $pub/gateway-ca/$q-server-ca.pem is missing (public server CA of $q)" >&2; exit 2; }; done
   grep -l 'PRIVATE KEY' "$pub"/gateway-ca/*.pem >/dev/null 2>&1 && { echo "render.sh: $pub/gateway-ca holds a private key" >&2; exit 2; }
 fi
-exec python3 -I "$here/render.py" "$party" "$digest" "$pub" "$here/../../network" "$tls" "${mint:+$mrd:$mdf}" ${remote[@]+"${remote[@]}"} ${gw[@]+"${gw[@]}"}
+exec python3 -I "$here/render.py" "$party" "$digest" "$pub" "$here/../../network" "$tls" "${mint:+$mrd:$mdf}" "${aps:+$apools}" ${remote[@]+"${remote[@]}"} ${gw[@]+"${gw[@]}"}
