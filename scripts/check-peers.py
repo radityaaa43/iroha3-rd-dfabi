@@ -146,9 +146,16 @@ if sts:
         bad.append("the PVC data must stay mounted at /storage (subPath data)")
     shm = [m for m in mounts if m["mountPath"].startswith("/dev/shm")]
     # the live peer.toml (Secret, keys inside) points kura/state/sidecars at the assembler's localnet dir; --state-root puts that dir on the PVC
-    want = [{"name": "data", "mountPath": state_root, "subPath": "shm-ln"}] if state_root else []
+    want = [{"name": "data", "mountPath": state_root, "subPath": "peer-state"}] if state_root else []
     if shm != want:
         bad.append(f"/dev/shm mounts must be exactly {want}: {shm}")
+    # iroha3d's SoraNet replay store refuses any ancestor dir that is group/world-writable or owned by another uid
+    # (iroha_crypto soranet custody validate_custodied_ancestor_chain @071e281e). A subPath dir kubelet creates is root-owned and not
+    # writable by uid 1001 (live 2026-11-13 bank-b: "SoraNet handshake negotiation failed"), so the init container makes it 0700 first.
+    init = " ".join(sts["spec"]["template"]["spec"]["initContainers"][0]["command"])
+    need = "mkdir -p /pvc/data /pvc/peer-state && chmod 00700 /pvc/data /pvc/peer-state" if state_root else "mkdir -p /pvc/data && chmod 00700 /pvc/data"
+    if need not in init:
+        bad.append(f"init storage-dir must run {need!r}: {init}")
 if bad:
     print("\n".join(f"FAIL: {party}: {b}" for b in bad), file=sys.stderr)
 print(f"{'FAIL' if bad else 'ok:  '} {party}: {len(docs)} objects")
