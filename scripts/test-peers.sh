@@ -27,13 +27,14 @@ refuse "0.0.0.0/0" "/32" bi $H 0.0.0.0/0
 refuse "missing cidr" "usage" bi $H
 refuse "a clb health range other than 100.64.0.0/10" "100.64.0.0/10" --clb-health-cidr 10.0.0.0/8 bi $H $CIDR
 refuse "an open clb health range" "100.64.0.0/10" --clb-health-cidr 0.0.0.0/0 bi $H $CIDR
-SR=/dev/shm/iroha3-new/tmp/tmp.BAREFwIKTo/ln
-refuse "a --state-root outside the assembler localnet dir" "state-root" --state-root /storage bi $H $CIDR
-refuse "a --state-root with .." "state-root" --state-root /dev/shm/iroha3-new/tmp/../ln bi $H $CIDR
+SR=/dev/shm/iroha3-new
+refuse "a --state-root outside /dev/shm" "state-root" --state-root /storage bi $H $CIDR
+refuse "a nested --state-root (runc makes its parents root-owned)" "state-root" --state-root /dev/shm/iroha3-new/tmp/tmp.BAREFwIKTo/ln bi $H $CIDR
+refuse "a --state-root of .." "state-root" --state-root /dev/shm/.. bi $H $CIDR
 refuse "an empty --state-root" "state-root" --state-root "" bi $H $CIDR
 for p in bi bank-a bank-b; do
   out=$("$R" --state-root $SR "$p" $H $CIDR 2>&1) || { fail "render --state-root $p"; continue; }
-  python3 -I scripts/check-peers.py "$p" $H $CIDR state-root:$SR <<<"$out" && ok "$p --state-root: the PVC also at $SR (subPath peer-state, made 0700 by the init container)" || fails=$((fails + 1))
+  python3 -I scripts/check-peers.py "$p" $H $CIDR state-root:$SR <<<"$out" && ok "$p --state-root: the PVC also at $SR (subPath peer-shm, made 0700 by the init container)" || fails=$((fails + 1))
 done
 out=$("$R" --state-root $SR --cluster 2 bank-c $H $CIDR 2>&1) && python3 -I scripts/check-peers.py bank-c $H $CIDR c2 state-root:$SR <<<"$out" && ok "bank-c --state-root" || fail "bank-c --state-root"
 out=$("$R" bi $H $CIDR) && python3 -I scripts/check-peers.py bi $H $CIDR state-root:$SR <<<"$out" >/dev/null 2>&1 && fail "a render without --state-root passes the --state-root checker" || ok "MUTANT: no --state-root FAILS the state-root checker"

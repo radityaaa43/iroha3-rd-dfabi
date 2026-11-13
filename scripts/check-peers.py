@@ -146,14 +146,18 @@ if sts:
         bad.append("the PVC data must stay mounted at /storage (subPath data)")
     shm = [m for m in mounts if m["mountPath"].startswith("/dev/shm")]
     # the live peer.toml (Secret, keys inside) points kura/state/sidecars at the assembler's localnet dir; --state-root puts that dir on the PVC
-    want = [{"name": "data", "mountPath": state_root, "subPath": "peer-state"}] if state_root else []
+    want = [{"name": "data", "mountPath": state_root, "subPath": "peer-shm"}] if state_root else []
     if shm != want:
         bad.append(f"/dev/shm mounts must be exactly {want}: {shm}")
+    # The mount point must be a DIRECT child of /dev/shm: a root-owned sticky ancestor (/dev/shm, 1777) needs an owner-held 0700 child
+    # (validate_custodied_ancestor_chain "protected_child"); runc creates any missing mount-path parent as root (live bank-a 2026-11-13).
+    if state_root and not (state_root.startswith("/dev/shm/") and "/" not in state_root[len("/dev/shm/"):]):
+        bad.append(f"--state-root must be a direct child of /dev/shm: {state_root}")
     # iroha3d's SoraNet replay store refuses any ancestor dir that is group/world-writable or owned by another uid
     # (iroha_crypto soranet custody validate_custodied_ancestor_chain @071e281e). A subPath dir kubelet creates is root-owned and not
     # writable by uid 1001 (live 2026-11-13 bank-b: "SoraNet handshake negotiation failed"), so the init container makes it 0700 first.
     init = " ".join(sts["spec"]["template"]["spec"]["initContainers"][0]["command"])
-    need = "mkdir -p /pvc/data /pvc/peer-state && chmod 00700 /pvc/data /pvc/peer-state" if state_root else "mkdir -p /pvc/data && chmod 00700 /pvc/data"
+    need = "mkdir -p /pvc/data /pvc/peer-shm && chmod 00700 /pvc/data /pvc/peer-shm" if state_root else "mkdir -p /pvc/data && chmod 00700 /pvc/data"
     if need not in init:
         bad.append(f"init storage-dir must run {need!r}: {init}")
 if bad:
