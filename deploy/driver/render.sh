@@ -14,16 +14,18 @@
 # --remote-gw <party>=<ipv4> (repeatable; bank-c ONLY, and --audit-tls on bank-c requires all three of bi, bank-a, bank-b): the cluster-1 auditors' gateways are not resolvable from
 # cluster 2, so the config gets `[tls.resolve]` "gateway.rd-iroha3-<party>.svc.cluster.local" = "<ip>:8443" (node-build tls_http.rs:53-55; the gateway leaf SAN stays that name) and the SAME
 # ip as a /32 ipBlock in driver-egress, so the two cannot drift. <ip> = the external gateway-lb address of that party, read at apply time, never committed.
-# --aps --aps-pools <pools.json> (APS all-flows, plan 2026-11-13-04; needs --audit-tls): ConfigMap aps-pools carries the PUBLIC pool records you give (node-build pools.rs PoolFile: rd and dfabi, each
-# pool_id, route, policy, governance, origin, bundles; the file is shape-checked, nothing is invented), copied by an init container into the writable /pools and set as `pools_file`; `[aps]` in
-# rd-dfabi.toml: BI `coordinator = true`, a bank `coordinator_url` = the BI gateway (bank-c resolves it through [tls.resolve]); driver memory 2Gi/3Gi (prover ~1.1 GiB RSS). The BI driver also
+# --aps [--aps-pools <pools.json>] (APS all-flows, plan 2026-11-13-04; needs --audit-tls). BANKS: --aps-pools is required; ConfigMap aps-pools carries the PUBLIC pool records you give (node-build pools.rs
+# PoolFile: rd and dfabi, each pool_id, route, policy, governance, origin, bundles; shape-checked, nothing is invented; `bundles` is forced to [] because the bank driver fetches the bundle index from BI at
+# runtime), copied by an init container into the writable emptyDir /pools and set as `pools_file`. BI: NO --aps-pools and no ConfigMap; the PVC `pools-index` (deploy/pool-init: the live bundle index and
+# BI's origin reserve notes) is mounted rw at /pools (`pools_file`, `key_dir = /pools/keys`), an init container LINKS the Secret's bi.seed and bi.note into /pools/keys (never copies a key file onto the
+# disk; deploy/aps-run pattern) and the Deployment is Recreate (RWO volume). `[aps]` in rd-dfabi.toml: BI `coordinator = true`, a bank `coordinator_url` = the BI gateway (bank-c resolves it through [tls.resolve]); driver memory 2Gi/3Gi (prover ~1.1 GiB RSS). The BI driver also
 # gets the native sidecar `gw-tls` (loopback 18101-18104 -> the four gateways, mTLS; deploy/aps-run pattern) and its [torii] points there; that needs the gateway-lb address of bank-c:
 # --remote-gw bank-c=<ipv4> (BI + --aps ONLY; also a /32 in driver-egress, so the sidecar upstream and the NetworkPolicy cannot drift).
 # <public-dir> (network/public or ~/iroha3-new/public) holds chain_id, genesis.expected_hash (names ConfigMap genesis-<hash8>) and
 # peers.json; it must hold no private material. bank-c (cluster 2) renders the same objects: no zone or node pin anywhere.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "usage: render.sh bi|bank-a|bank-b|bank-c <sha256:<64 hex> image digest> <public-dir> [--audit-tls [--remote-gw-cidr <ipv4>/32]... [--remote-gw bi|bank-a|bank-b=<ipv4>]...] [--mint-enabled --mint-max-rd <n> --mint-max-dfabi <n>] [--aps --aps-pools <pools.json> (BI: with --remote-gw bank-c=<ipv4>)]" >&2; exit 2; }
+usage() { echo "usage: render.sh bi|bank-a|bank-b|bank-c <sha256:<64 hex> image digest> <public-dir> [--audit-tls [--remote-gw-cidr <ipv4>/32]... [--remote-gw bi|bank-a|bank-b=<ipv4>]...] [--mint-enabled --mint-max-rd <n> --mint-max-dfabi <n>] [--aps [--aps-pools <pools.json>: banks only] (BI: with --remote-gw bank-c=<ipv4>)]" >&2; exit 2; }
 (( $# >= 3 )) || usage
 party=$1 digest=$2 pub=$3; shift 3
 tls="" remote=() gw=() mint="" mrd="" mdf="" aps="" apools=""
@@ -53,7 +55,11 @@ while (( $# )); do
 done
 if [[ -n $aps ]]; then
   [[ -n $tls ]] || { echo "render.sh: --aps needs --audit-tls (the coordinator and the party drivers talk through the gateways over mTLS)" >&2; exit 2; }
-  [[ -f $apools ]] || { echo "render.sh: --aps needs --aps-pools <pools.json> (the public pool records; file not found: '$apools')" >&2; exit 2; }
+  if [[ $party == bi ]]; then
+    [[ -z $apools ]] || { echo "render.sh: BI --aps takes no --aps-pools: BI keeps the live pool index on the PVC pools-index (deploy/pool-init)" >&2; exit 2; }
+  else
+    [[ -f $apools ]] || { echo "render.sh: --aps needs --aps-pools <pools.json> (the public pool records; file not found: '$apools')" >&2; exit 2; }
+  fi
   [[ $party != bi || " ${gw[*]-} " == *" bank-c="* ]] || { echo "render.sh: BI --aps needs --remote-gw bank-c=<ipv4> (the gateway-lb of bank-c: the gw-tls sidecar reaches its Torii through it)" >&2; exit 2; }
 elif [[ -n $apools ]]; then usage; fi
 if (( ${#gw[@]} )); then
@@ -83,4 +89,4 @@ if [[ -n $tls ]]; then
   for q in bi bank-a bank-b bank-c; do [[ -f $pub/gateway-ca/$q-server-ca.pem ]] || { echo "render.sh: $pub/gateway-ca/$q-server-ca.pem is missing (public server CA of $q)" >&2; exit 2; }; done
   grep -l 'PRIVATE KEY' "$pub"/gateway-ca/*.pem >/dev/null 2>&1 && { echo "render.sh: $pub/gateway-ca holds a private key" >&2; exit 2; }
 fi
-exec python3 -I "$here/render.py" "$party" "$digest" "$pub" "$here/../../network" "$tls" "${mint:+$mrd:$mdf}" "${aps:+$apools}" ${remote[@]+"${remote[@]}"} ${gw[@]+"${gw[@]}"}
+exec python3 -I "$here/render.py" "$party" "$digest" "$pub" "$here/../../network" "$tls" "${mint:+$mrd:$mdf}" "$aps" "$apools" ${remote[@]+"${remote[@]}"} ${gw[@]+"${gw[@]}"}

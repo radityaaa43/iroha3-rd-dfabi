@@ -7,8 +7,9 @@ import tomllib
 party, digest, pub, network = sys.argv[1:5]
 audit_tls = len(sys.argv) > 5 and sys.argv[5] == "--audit-tls"
 mint = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] else ""  # "<max_rd>:<max_dfabi>" (BI only; render.sh validates)
-aps_pools = sys.argv[7] if len(sys.argv) > 7 else ""  # --aps-pools <pools.json> (render.sh; "" = no APS)
-extra = sys.argv[8:] if audit_tls else []
+aps = len(sys.argv) > 7 and sys.argv[7] == "1"  # --aps (render.sh)
+aps_pools = sys.argv[8] if len(sys.argv) > 8 else ""  # --aps-pools <pools.json> (banks only; BI uses the PVC pools-index)
+extra = sys.argv[9:] if audit_tls else []
 gw_ip = dict(a.split("=", 1) for a in extra if "=" in a)  # bank-c only (render.sh): cluster-1 party -> external gateway-lb ip
 bankc_ip = gw_ip.pop("bank-c", None)  # BI --aps only (render.sh): the gateway-lb of bank-c, no [tls.resolve] entry (cluster 1 resolves the gateways by name)
 # --remote-gw-cidr values first, then the /32s derived from --remote-gw in party order (the same ip feeds [tls.resolve] below)
@@ -44,7 +45,8 @@ if aps_pools:
                 and isinstance(r["bundles"], list)):
             print(f"render.sh: {aps_pools}: {k} record is not a PoolRecord (pool_id 64 lowercase hex, route/policy/governance base64, origin 2 hex commitments, bundles list)", file=sys.stderr)
             sys.exit(2)
-aps_coordinator = party == "bi"
+        r["bundles"] = []  # the bank driver fetches the bundle index from BI at runtime (T2): the seed never carries one
+aps_coordinator = aps and party == "bi"  # BI keeps its pools on the PVC pools-index (render.sh refuses --aps-pools there)
 ENVOY = "envoyproxy/envoy@sha256:b1f389c3a6148e85e9de364cb867aa2e5802153abb37ad80f1f2241d693da32a"  # the gateways' pinned envoy (same as deploy/aps-run/render.py)
 labels = {"app.kubernetes.io/part-of": "rd-iroha3", "rd-iroha3/party": party}
 role = {**labels, "rd-iroha3/role": "driver"}
@@ -57,15 +59,15 @@ toml = "\n".join(
         'client_toml = "/client/client.toml"',  # a subPath mount (below): a Secret volume file is a symlink and iroha_config_base refuses symlinks
         f'party = "{party}"  # the acting party (sponsor = this bank, node-build S10); set explicitly, never the default bi',
         'peers_json = "/config/peers.json"',
-        'key_dir = "/keys"',
+        f'key_dir = "{"/pools/keys" if aps_coordinator else "/keys"}"' + ("  # APS: on the PVC pools-index; the Secret keys are linked in by the init container pools-link" if aps_coordinator else ""),
         f'fee_asset = "{fee}"',
-        *(['pools_file = "/pools/pools.json"  # APS: ConfigMap aps-pools, copied into the writable emptyDir /pools by an init container'] if pools else []),
+        *(['pools_file = "/pools/pools.json"  # APS: ' + ("the live index on the PVC pools-index (deploy/pool-init)" if aps_coordinator else "ConfigMap aps-pools, copied into the writable emptyDir /pools by an init container")] if aps else []),
         *(["mint_enabled = true  # BI only (K6): POST /mint for RD and DFABI up to the caps of [auditor]"] if mint else []),
         'auditor_url = "bi-auditor.rd-iroha3-bi.svc.cluster.local:8090"  # unused by the server mode',
         "",
         "[torii]",
         # BI --aps: settle() uses plain-HTTP iroha client calls to all four committee Torii, so BI reaches them through the gw-tls sidecar (loopback 18101-18104, mTLS to the gateways)
-        *([f'{p} = "http://127.0.0.1:{18101 + i}/"' for i, p in enumerate(PARTIES)] if pools and aps_coordinator
+        *([f'{p} = "http://127.0.0.1:{18101 + i}/"' for i, p in enumerate(PARTIES)] if aps_coordinator
           else [f'{p} = "http://{p}-0.{p}.rd-iroha3-{p}.svc.cluster.local:8080/"' for p in PARTIES]),
         "",
         "[assets]",
@@ -77,7 +79,7 @@ toml = "\n".join(
         f"dfabi = {lanes['ds-dfabi']}",
         "",
         *(["# APS coordinator = the BI driver only; a bank forwards POST /aps/submit to the BI gateway over mTLS (bank-c resolves the host through [tls.resolve])",
-           "[aps]", *(["coordinator = true"] if aps_coordinator else ['coordinator_url = "https://gateway.rd-iroha3-bi.svc.cluster.local:8443"']), ""] if pools else []),
+           "[aps]", *(["coordinator = true"] if aps_coordinator else ['coordinator_url = "https://gateway.rd-iroha3-bi.svc.cluster.local:8443"']), ""] if aps else []),
         *(["# K6: per-request mint caps (cfg.auditor.max_rd / max_dfabi); the table needs all of listen, store_dir, max_rd, max_dfabi, parties (node-build config.rs:96-118); listen/store_dir are unused by the server mode",
            "[auditor]", 'listen = "0.0.0.0:8090"', 'store_dir = "/audit-store"', f"max_rd = {mint.split(':')[0]}", f"max_dfabi = {mint.split(':')[1]}",
            "parties = [" + ", ".join(json.dumps(json.loads(read('accounts.json'))[q]) for q in PARTIES) + "]", ""] if mint else []),
@@ -141,10 +143,11 @@ docs = [
     *([{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "aps-pools", "namespace": ns, "labels": labels},
         "data": {"pools.json": json.dumps(pools, indent=2) + "\n"}}] if pools else []),
     *([{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "driver-gw-envoy", "namespace": ns, "labels": labels},
-        "data": {"envoy.yaml": json.dumps(sidecar(), indent=2) + "\n"}}] if pools and aps_coordinator else []),
+        "data": {"envoy.yaml": json.dumps(sidecar(), indent=2) + "\n"}}] if aps_coordinator else []),
     {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "driver", "namespace": ns, "labels": role},
      "spec": {
          "replicas": 1,
+         **({"strategy": {"type": "Recreate"}} if aps_coordinator else {}),  # BI --aps: the RWO PVC pools-index cannot be mounted by an old and a new pod at once
          "selector": {"matchLabels": role},
          "template": {"metadata": {"labels": role}, "spec": {
              "automountServiceAccountToken": False,
@@ -152,17 +155,22 @@ docs = [
              "imagePullSecrets": [{"name": "ghcr-pull"}],
              "securityContext": {"runAsNonRoot": True, "runAsUser": 1001, "runAsGroup": 1001, "fsGroup": 1001,
                                  "seccompProfile": {"type": "RuntimeDefault"}},
-             # --aps: pools-seed copies ConfigMap aps-pools into the writable emptyDir /pools (settle() rewrites pools_file: lock file + rename, receipts dir beside it); BI also runs the gw-tls native sidecar
+             # --aps, banks: pools-seed copies ConfigMap aps-pools into the writable emptyDir /pools (settle() rewrites pools_file: lock file + rename, receipts dir beside it).
+             # --aps, BI: the PVC pools-index is /pools; pools-link LINKS the Secret's bi.seed and bi.note into /pools/keys (deploy/aps-run/render.py pattern, never a copy of a key file); gw-tls native sidecar.
              **({"initContainers": [
-                 {"name": "pools-seed", "image": image, "imagePullPolicy": "IfNotPresent", "command": ["/bin/bash", "-c", "cp /aps-pools/pools.json /pools/pools.json"],
-                  "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi"}}, "securityContext": sec,
-                  "volumeMounts": [{"name": "aps-pools", "mountPath": "/aps-pools", "readOnly": True}, {"name": "pools", "mountPath": "/pools"}]},
+                 *([{"name": "pools-link", "image": image, "imagePullPolicy": "IfNotPresent",
+                     "command": ["/bin/bash", "-c", " && ".join(["set -eu", "test -f /pools/pools.json"] + [f"{{ test -L /pools/keys/{k} || ln -s /keys/{k} /pools/keys/{k}; }}" for k in ("bi.seed", "bi.note")])],
+                     "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi"}}, "securityContext": sec,
+                     "volumeMounts": [{"name": "keys", "mountPath": "/keys", "readOnly": True}, {"name": "pools", "mountPath": "/pools"}]}] if aps_coordinator else
+                   [{"name": "pools-seed", "image": image, "imagePullPolicy": "IfNotPresent", "command": ["/bin/bash", "-c", "cp /aps-pools/pools.json /pools/pools.json"],
+                     "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi"}}, "securityContext": sec,
+                     "volumeMounts": [{"name": "aps-pools", "mountPath": "/aps-pools", "readOnly": True}, {"name": "pools", "mountPath": "/pools"}]}]),
                  *([{"name": "gw-tls", "image": ENVOY, "imagePullPolicy": "IfNotPresent", "restartPolicy": "Always",
                      "args": ["-c", "/config/envoy.yaml", "--log-level", "warn"],
                      "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"cpu": "500m", "memory": "128Mi"}}, "securityContext": sec,
                      "volumeMounts": [{"name": "envoy-config", "mountPath": "/config", "readOnly": True}, {"name": "server-cas", "mountPath": "/server-cas", "readOnly": True},
                                       {"name": "client-cert", "mountPath": "/client", "readOnly": True}, {"name": "tmp", "mountPath": "/tmp"}]}] if aps_coordinator else []),
-             ]} if pools else {}),
+             ]} if aps else {}),
              "containers": [{
                  "name": "driver",
                  "image": image,
@@ -170,7 +178,7 @@ docs = [
                  "args": ["server", "/config/rd-dfabi.toml", "--listen", "0.0.0.0:8091"],
                  "ports": [{"name": "http", "containerPort": 8091}],
                  # --aps: the prover peaks at ~1.1 GiB RSS (reports/b-aps.md); memory 2Gi/3Gi and cpu 1/2 as deploy/aps-run/render.py
-                 "resources": ({"requests": {"cpu": "1", "memory": "2Gi"}, "limits": {"cpu": "2", "memory": "3Gi"}} if pools
+                 "resources": ({"requests": {"cpu": "1", "memory": "2Gi"}, "limits": {"cpu": "2", "memory": "3Gi"}} if aps
                                else {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}),
                  "securityContext": sec,
                  # One request at a time: /healthz is unanswered while a /dvp-native waits for Applied (up to 300 s). Liveness
@@ -185,7 +193,7 @@ docs = [
                      {"name": "genesis", "mountPath": "/genesis", "readOnly": True},
                  ] + ([{"name": "client-cert", "mountPath": "/tls/client", "readOnly": True},
                        {"name": "server-cas", "mountPath": "/tls/cas", "readOnly": True}] if audit_tls else [])
-                 + ([{"name": "pools", "mountPath": "/pools"}, {"name": "tmp", "mountPath": "/tmp"}] if pools else []),
+                 + ([{"name": "pools", "mountPath": "/pools"}, {"name": "tmp", "mountPath": "/tmp"}] if aps else []),
              }],
              "volumes": [
                  {"name": "keys", "secret": {"secretName": f"{party}-keys", "defaultMode": 0o400,
@@ -197,8 +205,8 @@ docs = [
              ] + ([{"name": "client-cert", "secret": {"secretName": "iroha3-client-cert", "defaultMode": 0o400,
                                                       "items": [{"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"}]}},
                    {"name": "server-cas", "configMap": {"name": "gateway-server-cas"}}] if audit_tls else [])
-             + ([{"name": "aps-pools", "configMap": {"name": "aps-pools"}}, {"name": "pools", "emptyDir": {}}, {"name": "tmp", "emptyDir": {}}]
-                + ([{"name": "envoy-config", "configMap": {"name": "driver-gw-envoy"}}] if aps_coordinator else []) if pools else []),
+             + (([{"name": "pools", "persistentVolumeClaim": {"claimName": "pools-index"}}, {"name": "tmp", "emptyDir": {}}, {"name": "envoy-config", "configMap": {"name": "driver-gw-envoy"}}] if aps_coordinator
+                 else [{"name": "aps-pools", "configMap": {"name": "aps-pools"}}, {"name": "pools", "emptyDir": {}}, {"name": "tmp", "emptyDir": {}}]) if aps else []),
          }},
      }},
     {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "driver", "namespace": ns, "labels": labels},
