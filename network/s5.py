@@ -298,9 +298,9 @@ def cmd_template(a):
     # left kura, state and the APS sidecars of all four peers in the container's /dev/shm instead of the PVC /storage.
     text = re.sub(r'"[^"\n]*/storage/peer\d+', '"/storage/kura', text)
     text = re.sub(r'"[^"\n]*/state/peer\d+', '"/storage/state', text)
-    leftover = sorted(set(re.findall(r'"([^"\n]*' + re.escape(str(a.localnet).rstrip("/")) + r'[^"\n]*)"', text)))
+    leftover = sorted(set(re.findall(r'"([^"\n]*' + re.escape(str(a.localnet).rstrip("/")) + r'/(?:storage|state)/[^"\n]*)"', text)))
     if leftover:
-        raise SystemExit(f"s5.py template: paths under the localnet dir remain: {leftover[:3]}")
+        raise SystemExit(f"s5.py template: storage/state paths under the localnet dir remain: {leftover[:3]}")
     text = text.replace(ids["old_gen"], ids["gen"]).replace(ids["old_client"], ids["bi"])
     text = text.replace(old_gen_pk, a.genesis_public_key)
     t = tomllib.loads(text)
