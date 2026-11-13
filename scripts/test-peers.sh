@@ -33,7 +33,7 @@ refuse "a --state-root with .." "state-root" --state-root /dev/shm/iroha3-new/tm
 refuse "an empty --state-root" "state-root" --state-root "" bi $H $CIDR
 for p in bi bank-a bank-b; do
   out=$("$R" --state-root $SR "$p" $H $CIDR 2>&1) || { fail "render --state-root $p"; continue; }
-  python3 -I scripts/check-peers.py "$p" $H $CIDR state-root:$SR <<<"$out" && ok "$p --state-root: the PVC also at $SR (subPath shm-ln)" || fails=$((fails + 1))
+  python3 -I scripts/check-peers.py "$p" $H $CIDR state-root:$SR <<<"$out" && ok "$p --state-root: the PVC also at $SR (subPath peer-state, made 0700 by the init container)" || fails=$((fails + 1))
 done
 out=$("$R" --state-root $SR --cluster 2 bank-c $H $CIDR 2>&1) && python3 -I scripts/check-peers.py bank-c $H $CIDR c2 state-root:$SR <<<"$out" && ok "bank-c --state-root" || fail "bank-c --state-root"
 out=$("$R" bi $H $CIDR) && python3 -I scripts/check-peers.py bi $H $CIDR state-root:$SR <<<"$out" >/dev/null 2>&1 && fail "a render without --state-root passes the --state-root checker" || ok "MUTANT: no --state-root FAILS the state-root checker"
