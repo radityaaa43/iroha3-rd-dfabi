@@ -52,7 +52,11 @@ fi
 tel='"rd-iroha3-bank-a", "rd-iroha3-bank-b", "rd-iroha3-bi"' # the cluster-1 peers poll each other's Torii (telemetry); bank-c has none (below)
 p2pns=$tel; [[ $party == bank-c ]] && p2pns='"rd-iroha3-bank-c"' # P2P from same-cluster peers: exact namespace names (form ruling), never a part-of label wildcard
 sed -e "s|@P2P_NS@|$p2pns|g" -e "s|@TELEMETRY_NS@|$tel|g" -e "s|@PARTY@|$party|g" -e "s|@GENESIS_HASH8@|$hash8|g" -e "s|@BANKC_LB_CIDR@|$cidr|g" "$here/peer.yaml.tpl" |
-  awk -v sr="$state_root" '{ print } /^              subPath: data$/ && sr { print "            - name: data"; print "              mountPath: " sr; print "              subPath: shm-ln" }' |
+  awk -v sr="$state_root" '
+    # --state-root: the init container also makes /pvc/peer-state (0700, uid 1001) BEFORE kubelet could create it root-owned
+    sr && index($0, "mkdir -p /pvc/data && chmod 00700 /pvc/data") { sub(/mkdir -p \/pvc\/data && chmod 00700 \/pvc\/data/, "mkdir -p /pvc/data /pvc/peer-state \\&\\& chmod 00700 /pvc/data /pvc/peer-state") }
+    { print }
+    /^              subPath: data$/ && sr { print "            - name: data"; print "              mountPath: " sr; print "              subPath: peer-state" }' |
   awk -v clb="$clb" '/^@CLB_HEALTH@$/ { if (clb) { print "        - ipBlock:"; print "            cidr: \"100.64.0.0/10\"" } next } { print }' |
   awk -v c2="$c2" '
     /^        # @TELEMETRY-BEGIN@$/ { if (c2) skip_t = 1; next }
