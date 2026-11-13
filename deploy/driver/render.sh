@@ -16,7 +16,7 @@
 # ip as a /32 ipBlock in driver-egress, so the two cannot drift. <ip> = the external gateway-lb address of that party, read at apply time, never committed.
 # --aps [--aps-pools <pools.json>] (APS all-flows, plan 2026-11-13-04; needs --audit-tls). BANKS: --aps-pools is required; ConfigMap aps-pools carries the PUBLIC pool records you give (node-build pools.rs
 # PoolFile: rd and dfabi, each pool_id, route, policy, governance, origin, bundles; shape-checked, nothing is invented; `bundles` is forced to [] because the bank driver fetches the bundle index from BI at
-# runtime), copied by an init container into the writable emptyDir /pools and set as `pools_file`. BI: NO --aps-pools and no ConfigMap; the PVC `pools-index` (deploy/pool-init: the live bundle index and
+# runtime), copied by an init container into the writable emptyDir /pools and set as `pools_file`. BI: NO --aps-pools and no ConfigMap; the PVC `pools-v2` (deploy/pool-init: the live bundle index and
 # BI's origin reserve notes) is mounted rw at /pools (`pools_file`, `key_dir = /pools/keys`), an init container LINKS the Secret's bi.seed and bi.note into /pools/keys (never copies a key file onto the
 # disk; deploy/aps-run pattern) and the Deployment is Recreate (RWO volume). `[aps]` in rd-dfabi.toml: BI `coordinator = true`, a bank `coordinator_url` = the BI gateway (bank-c resolves it through [tls.resolve]); driver memory 2Gi/3Gi (prover ~1.1 GiB RSS). The BI driver also
 # gets the native sidecar `gw-tls` (loopback 18101-18104 -> the four gateways, mTLS; deploy/aps-run pattern) and its [torii] points there; that needs the gateway-lb address of bank-c:
@@ -57,7 +57,7 @@ done
 if [[ -n $aps ]]; then
   [[ -n $tls ]] || { echo "render.sh: --aps needs --audit-tls (the coordinator and the party drivers talk through the gateways over mTLS)" >&2; exit 2; }
   if [[ $party == bi ]]; then
-    [[ -z $apools ]] || { echo "render.sh: BI --aps takes no --aps-pools: BI keeps the live pool index on the PVC pools-index (deploy/pool-init)" >&2; exit 2; }
+    [[ -z $apools ]] || { echo "render.sh: BI --aps takes no --aps-pools: BI keeps the live pool index on the PVC pools-v2 (deploy/pool-init)" >&2; exit 2; }
   else
     [[ -f $apools ]] || { echo "render.sh: --aps needs --aps-pools <pools.json> (the public pool records; file not found: '$apools')" >&2; exit 2; }
   fi
