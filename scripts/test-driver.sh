@@ -37,7 +37,7 @@ for p in bi bank-a bank-b bank-c; do
   python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" <<<"$out" || fails=$((fails + 1))
   python3 -I scripts/check-netpol-form.py "driver" <<<"$out" || fails=$((fails + 1))
 done
-# --audit-tls: [audit] 2-of-3 through the gateways, [tls], client-cert Secret volume, public server CAs ConfigMap
+# --audit-tls: [audit] BI only (1-of-1) through the BI gateway, [tls], client-cert Secret volume, public server CAs ConfigMap
 mkdir -p "$P/gateway-ca"
 for q in bi bank-a bank-b bank-c; do printf -- '-----BEGIN CERTIFICATE-----\nMIIB%s\n-----END CERTIFICATE-----\n' "$q" > "$P/gateway-ca/$q-server-ca.pem"; done
 for p in bi bank-a bank-b; do  # cluster 1: the three auditors are in the same cluster (names resolve); bank-c needs --remote-gw (below)
@@ -128,7 +128,7 @@ for mode in plain tls; do
 done
 dmut "the gateway rule missing from the --audit-tls policy" tls 'p["spec"]["egress"].pop()'
 # --aps (APS all-flows, plan 2026-11-13-04): [aps] (BI coordinator, banks coordinator_url), 2Gi/3Gi, BI gw-tls sidecar. Banks: ConfigMap aps-pools from the operator's PUBLIC pools.json (bundles forced to []) + pools-seed init
-# copy into /pools. BI (lead decision): NO ConfigMap; the PVC pools-index (deploy/pool-init) rw at /pools = pools_file, key_dir /pools/keys with the Secret's bi.seed/bi.note LINKED in (never copied), strategy Recreate (RWO)
+# copy into /pools. BI (lead decision): NO ConfigMap; the PVC pools-v2 (deploy/pool-init) rw at /pools = pools_file, key_dir /pools/keys with the Secret's bi.seed/bi.note LINKED in (never copied), strategy Recreate (RWO)
 PL="$T/pools.json"
 jq -n --arg a "$(printf '7e%.0s' $(seq 1 32))" --arg b "$(printf 'e6%.0s' $(seq 1 32))" --arg o1 "$(printf 'ab%.0s' $(seq 1 32))" --arg o2 "$(printf 'cd%.0s' $(seq 1 32))" \
   '[$a, $b] | map({pool_id: ., route: "cm91dGU=", policy: "cG9saWN5", governance: "Z292ZXJuYW5jZQ==", origin: [$o1, $o2], bundles: [{id: $o1, height: 7}]}) | {rd: .[0], dfabi: .[1]}' > "$PL"  # a live index in the input: the bank render must force bundles to []
@@ -156,7 +156,7 @@ refuse "--aps with a missing pools file" "not found" bank-a "$D" "$P" --audit-tl
 refuse "BI --aps without --remote-gw bank-c" "bank-c" bi "$D" "$P" --audit-tls "${APSBI[@]}"
 refuse "BI --aps with a private bank-c address" "public" bi "$D" "$P" --audit-tls "${APSBI[@]}" --remote-gw bank-c=10.0.0.5
 refuse "BI --aps with a second --remote-gw party" "bank-c=<ipv4> only" bi "$D" "$P" --audit-tls "${APSBI[@]}" --remote-gw bank-c=$BCGW --remote-gw bank-a=203.0.113.21
-refuse "BI --aps with --aps-pools (BI keeps its pools on the PVC pools-index)" "pools-index" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW
+refuse "BI --aps with --aps-pools (BI keeps its pools on the PVC pools-v2)" "pools-v2" bi "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW
 refuse "--remote-gw bank-c=<ip> for BI without --aps" "driver only" bi "$D" "$P" --audit-tls --remote-gw bank-c=$BCGW
 refuse "--remote-gw bank-c=<ip> for a bank" "bi, bank-a or bank-b" bank-a "$D" "$P" --audit-tls "${APS[@]}" --remote-gw bank-c=$BCGW
 refuse "bank-c --aps with --remote-gw bank-c" "bi, bank-a or bank-b" bank-c "$D" "$P" --audit-tls "${APS[@]}" "${GW[@]}" --remote-gw bank-c=$BCGW
@@ -209,7 +209,7 @@ apsmut "the BI driver-egress without the bank-c /32" bi 'e = next(d for d in doc
 apsmut "the BI driver-egress with an extra ipBlock" bi 'e = next(d for d in docs if d["metadata"]["name"] == "driver-egress"); e["spec"]["egress"][2]["to"].append({"ipBlock": {"cidr": "8.8.8.8/32"}})'
 apsmut "a gw-tls sidecar on a bank driver" bank-a "$DEP"'ps["initContainers"].append({"name": "gw-tls", "image": "x", "restartPolicy": "Always"})'
 apsmut "a bank aps-pools carrying a bundle index (bundles not forced to [])" bank-a 'a = next(d for d in docs if d["metadata"]["name"] == "aps-pools"); p = json.loads(a["data"]["pools.json"]); p["rd"]["bundles"] = [{"id": "ab", "height": 7}]; a["data"]["pools.json"] = json.dumps(p)'
-apsmut "the BI pools volume an emptyDir instead of the PVC pools-index" bi "$DEP"'v = next(v for v in ps["volumes"] if v["name"] == "pools"); v.pop("persistentVolumeClaim"); v["emptyDir"] = {}'
+apsmut "the BI pools volume an emptyDir instead of the PVC pools-v2" bi "$DEP"'v = next(v for v in ps["volumes"] if v["name"] == "pools"); v.pop("persistentVolumeClaim"); v["emptyDir"] = {}'
 apsmut "the BI pools PVC of another name" bi "$DEP"'next(v for v in ps["volumes"] if v["name"] == "pools")["persistentVolumeClaim"]["claimName"] = "pools"'
 apsmut "the BI Deployment without strategy Recreate (RWO volume)" bi "$DEP"'dep["spec"].pop("strategy")'
 apsmut "the BI /pools mounted read-only" bi "$DEP"'next(m for m in ps["containers"][0]["volumeMounts"] if m["mountPath"] == "/pools")["readOnly"] = True'
