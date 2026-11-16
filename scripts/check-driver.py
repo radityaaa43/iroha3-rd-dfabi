@@ -149,7 +149,7 @@ if dep:
         and c["securityContext"].get("capabilities", {}).get("drop") == ["ALL"],
         # --aps: the prover peaks at ~1.1 GiB RSS (reports/b-aps.md; deploy/aps-run/render.py): memory 2Gi / 3Gi, cpu as aps-run
         "requests": c["resources"]["requests"] == ({"cpu": "1", "memory": "2Gi"} if aps is not None else {"cpu": "50m", "memory": "64Mi"}),
-        "limits": ("cpu" in c["resources"]["limits"] and "memory" in c["resources"]["limits"]) if aps is None else c["resources"]["limits"] == {"cpu": "2", "memory": "3Gi"},
+        "limits": ("cpu" in c["resources"]["limits"] and "memory" in c["resources"]["limits"]) if aps is None else c["resources"]["limits"] == {"cpu": "4", "memory": "3Gi"},
         "healthz probes": c["livenessProbe"]["httpGet"]["path"] == "/healthz" and c["readinessProbe"]["httpGet"]["path"] == "/healthz",
         # ANALYST Q10: the server answers ONE request at a time, so /healthz is unanswered while a /dvp-native waits for Applied
         # (up to client.toml status_timeout_ms = 300 s). Liveness must outlast that (no kill mid-request); readiness fails fast so
