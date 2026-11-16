@@ -1,4 +1,8 @@
-"""Render one aps-run Job (see render.sh). Output: YAML stream of JSON documents, deterministic."""
+"""Render one aps-run Job (see render.sh). Output: YAML stream of JSON documents, deterministic.
+
+RETIRED 2026-11-16 (APS conformance design 8): the aps-run Job (a pool per trade, min_approvals = 2) is removed from the cluster at the chain reset; the live path is the BI
+coordinator driver (deploy/driver/render.sh --aps) over the four shared pools (deploy/pool-init). Kept as the record of how the old path was rendered; do not run it on the new chain.
+"""
 import json
 import re
 import sys

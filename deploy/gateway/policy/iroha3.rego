@@ -8,7 +8,7 @@
 #   lensa              CN `lensa`, signed directly by iroha3_ca.lensa[<node>], the Lensa client CA of THIS gateway's party
 #   bank-a/b/c, bi     CN = the role, signed directly by iroha3_ca.role[<that role>], the role's own CA
 # No certificate, a second Cert element, a leaf of another CA, another CN or server-only key usage: denied.
-# Routes (iroha3-opa-ops rows 1-12 and 16-19; method and path match exactly, anchored, nothing else passes; row 13, the auditor, is below the rows):
+# Routes (iroha3-opa-ops rows 1-12 and 16-20; method and path match exactly, anchored, nothing else passes; row 13, the auditor, is below the rows):
 #   1-4   GET   health, public reads, tx status (hash=<64 hex>[&scope=]), balance reads (owned_by=<I105>)   lensa, bank-*, bi
 #   5-7   POST/GET  signed tx submit, APS client calls and reads                                            bank-*, bi (not lensa)
 #   8     POST  audit capsule/approvals                                                                     bi
@@ -21,6 +21,7 @@
 #   17    POST /aps/address, POST /aps/leg (the BI coordinator driver calls the party drivers)              bi, every node
 #   18    POST /aps/submit (a bank's driver forwards to the coordinator)                                    bank-*, node bi only
 #   19    GET /aps/bundles (a bank's driver reads the bundle index from the coordinator)                   bank-*, node bi only
+#   20    POST /aps/capacity (the BI coordinator driver asks a party driver for its pool capacity)         bi, every node
 # Query strings are allowed only in the rows that name them; a path with any other query never matches.
 package iroha3
 
@@ -193,6 +194,12 @@ route("lensa") if {
 route("bi") if {
 	method == "POST"
 	path in {"/aps/address", "/aps/leg"}
+}
+
+# Row 20 (APS conformance, design 4.3): the coordinator asks each party driver for its capacity per (dataspace, asset); same caller and reach as row 17.
+route("bi") if {
+	method == "POST"
+	path == "/aps/capacity"
 }
 
 route(role) if {

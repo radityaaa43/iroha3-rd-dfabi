@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# RETIRED 2026-11-16 (APS conformance design 8): the aps-run Job (a pool per trade, min_approvals = 2) is removed at the chain reset; the live path is the BI coordinator driver (deploy/driver/render.sh --aps). Kept as a record.
 # Print ONE BI coordinator Job for the shared private-settlement pools (iroha3 S13 RED, S15). Writes nothing, calls no cluster,
 # renders NO Secret. Namespace rd-iroha3-bi ONLY.
 #   deploy/aps-run/render.sh <sha256:digest> <public-dir> <name> <bank-c-gateway-lb-ipv4> <rd-dfabi command...>
