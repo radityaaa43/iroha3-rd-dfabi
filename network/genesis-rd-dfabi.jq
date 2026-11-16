@@ -21,11 +21,16 @@ def readrole($acct; $label; $d): {Register:{Role:{grant_to:$acct,id:("restricted
   # 1. universal: party accounts, their fee balances (XOR is a Global asset), and the read rights of every
   #    restricted dataspace: a signed query fans out to every route and 403s unless all of them are readable.
   #    Party C gets none: it is the outsider. Two transactions at most: a normalized genesis may hold 16.
+#    The neutral sponsor (APS conformance design 4.4) is registered and funded with XOR for fees like a party, but it is no party:
+#    its own key (public/sponsor.pub), no other permission. CanReadRestrictedDataspace on the restricted dataspaces is written only
+#    when $sponsor_read is true (genesis-only permission, executor.rs INITIAL_GENESIS_ONLY_PERMISSION_NAMES; gate G2 decides).
   {instructions: [
-    acct($bi), acct($a), acct($b), acct($c),
-    xor($bi), xor($a), xor($b), xor($c),
+    acct($bi), acct($a), acct($b), acct($c), acct($sponsor),
+    xor($bi), xor($a), xor($b), xor($c), xor($sponsor),
     ($readds[] | . as $d | $readers[] | readperm(.a; $d)),
-    ($readds[] | . as $d | $readers[] | readrole(.a; .l; $d))
+    ($readds[] | . as $d | $readers[] | readrole(.a; .l; $d)),
+    ($readds[] | . as $d | select($sponsor_read) | readperm($sponsor; $d)),
+    ($readds[] | . as $d | select($sponsor_read) | readrole($sponsor; "sponsor"; $d))
   ], ivm_triggers: [], topology: []},
   # 2. home dataspace: domain, both definitions, aliases, BI ownership + mint right
   {instructions: [

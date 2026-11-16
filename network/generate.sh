@@ -8,8 +8,9 @@
 #        settlement (gate G1b): merge network/nexus.toml into every peer.toml,
 #        add RD/DFABI (genesis-rd-dfabi.jq) and the lane 1/2 validator
 #        instructions to the genesis, then validate and re-sign it. Needs
-#        PARTY_ACCOUNTS=<json file> {"bi":..,"bank-a":..,"bank-b":..,"bank-c":..}
-#        with the public account ids of the four parties (not secret).
+#        PARTY_ACCOUNTS=<json file> {"bi":..,"bank-a":..,"bank-b":..,"bank-c":..,"sponsor":..}
+#        with the public account ids of the four parties and of the neutral sponsor (not secret).
+#        SPONSOR_READ=1 also grants the sponsor CanReadRestrictedDataspace on the restricted dataspaces (default 0: gate G2 decides).
 # NETWORK_OUT / NETWORK_PUB redirect out/ and public/ (testing); NETWORK_OUT
 # must then be outside the repo or gitignored by the caller.
 set -euo pipefail
@@ -171,7 +172,7 @@ if [[ $APS == 1 ]]; then
   RD_ID=7onbjg2gRXveoAAUFsohCZyGW98t
   DFABI_ID=4mBWK1JCwQdHLDPpuVKc56eLsXka
   # RD and DFABI are DataspaceRestricted and share this home dataspace (see genesis-rd-dfabi.jq for why one).
-  HOME_DS=ds-rd
+  HOME_DS=ds-1
 
   python3 -I - "$HERE/nexus.toml" "$OUT" "${PARTIES[@]}" <<'PY'
 import json, sys, tomllib
@@ -281,6 +282,7 @@ PY
   # readds = every restricted dataspace id = lane indexes 1..n (check.sh asserts lane index == dataspace id)
   jq --arg bi "$(jq -er '.["bi"]' "$PARTY_ACCOUNTS")" --arg a "$(jq -er '.["bank-a"]' "$PARTY_ACCOUNTS")" \
      --arg b "$(jq -er '.["bank-b"]' "$PARTY_ACCOUNTS")" --arg c "$(jq -er '.["bank-c"]' "$PARTY_ACCOUNTS")" \
+     --arg sponsor "$(jq -er '.["sponsor"]' "$PARTY_ACCOUNTS")" --argjson sponsor_read "$([[ ${SPONSOR_READ:-0} == 1 ]] && echo true || echo false)" \
      --arg gen "$GEN_ACCOUNT" --arg rd "$RD_ID" --arg dfabi "$DFABI_ID" \
      --arg domain "wonderland.$HOME_DS" \
      --argjson readds "$(printf '%s\n' "${LANES[@]}" | jq -sc .)" \

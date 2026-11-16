@@ -20,7 +20,7 @@ bank-c = "http://bank-c-0.bank-c.iroha3.svc.cluster.local:8080/"
 rd = "7onbjg2gRXveoAAUFsohCZyGW98t"
 dfabi = "4mBWK1JCwQdHLDPpuVKc56eLsXka"
 
-# lane id = dataspace id (network/nexus.toml): ds-rd 1, ds-dfabi 2
+# lane id = dataspace id (network/nexus.toml): lane-1 (ds-1) 1, lane-2 (ds-2) 2
 [lanes]
 rd = 1
 dfabi = 2

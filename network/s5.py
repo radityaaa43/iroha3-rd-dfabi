@@ -247,7 +247,8 @@ def cmd_genesis(a):
     tmp = json.dumps(g, ensure_ascii=False)
     gen_account = ids["gen"]
     jq = ["jq", "--arg", "bi", ids["bi"], "--arg", "gov", ids["bi-gov"], "--arg", "a", ids["bank-a"], "--arg", "b", ids["bank-b"],
-          "--arg", "c", ids["bank-c"], "--arg", "gen", gen_account, "--arg", "rd", a.rd_id, "--arg", "dfabi", a.dfabi_id,
+          "--arg", "c", ids["bank-c"], "--arg", "sponsor", ids["sponsor"], "--argjson", "sponsor_read", "true" if a.sponsor_read else "false",
+          "--arg", "gen", gen_account, "--arg", "rd", a.rd_id, "--arg", "dfabi", a.dfabi_id,
           "--arg", "domain", "wonderland." + a.home_ds, "--argjson", "readds", json.dumps(lanes), "-f", a.jq_file, "/dev/stdin"]
     r = subprocess.run(jq, input=tmp.encode(), capture_output=True)
     assert r.returncode == 0, r.stderr.decode()
@@ -399,7 +400,8 @@ def main():
     g.add_argument("--stake-asset", required=True)
     g.add_argument("--rd-id", required=True)
     g.add_argument("--dfabi-id", required=True)
-    g.add_argument("--home-ds", default="ds-rd")
+    g.add_argument("--home-ds", default="ds-1")
+    g.add_argument("--sponsor-read", action="store_true")  # CanReadRestrictedDataspace for the sponsor (gate G2); default off
     g.add_argument("--jq-file", required=True)
     g.add_argument("--generate-sh", required=True)
     g.add_argument("--out", required=True)
