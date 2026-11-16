@@ -39,6 +39,9 @@ for a in bi bi-gov bank-a bank-b bank-c; do
 done
 [[ -f $params ]] || die "$params is missing (public KAGEMUSHA mint-finality parameters)"
 [[ -s $sponsor_pub ]] || die "$sponsor_pub is missing (the sponsor's account public key: network/keygen-party.sh sponsor)"
+# the sponsor is neutral: its key must be new, never a party / peer / genesis key (a shared key would make it a party)
+dup=$({ jq -r '.[]' "$accts"; jq -r '.[].public_key' "$peers"; echo "$GENESIS_PUBLIC_KEY"; } | tr 'A-Z' 'a-z' | grep -Fxc -- "$(tr -d '[:space:]' < "$sponsor_pub" | tr 'A-Z' 'a-z')") || true
+[[ $dup -eq 0 ]] || die "sponsor.pub is not new: it equals a key in accounts.json, peers.json or the genesis key (generate the sponsor with its own network/keygen-party.sh sponsor)"
 
 tmp=$(mktemp -d); chmod 700 "$tmp"; trap '[[ -n ${KEEP_TMP:-} ]] || rm -rf "$tmp"' EXIT # KEEP_TMP=1 only for debugging with throwaway keys
 chain=${CHAIN_ID:-$(uuidgen | tr 'A-Z' 'a-z')}
@@ -57,6 +60,7 @@ jq -n --arg og "$(conv "$(tr -d '\n' < "$tmp/ln/genesis.public_key")")" --arg oc
   '{old_gen:$og, old_client:$oc, gen:$g, bi:$bi, "bi-gov":$gov, "bank-a":$a, "bank-b":$b, "bank-c":$c, sponsor:$sp}' > "$tmp/ids.json"
 empty=$(jq -r 'to_entries[] | select(.value == "") | .key' "$tmp/ids.json" | tr '\n' ' ')
 [[ -z $empty ]] || die "address conversion returned nothing for: $empty"
+[[ $(jq '. as $i | [to_entries[] | select(.key != "sponsor" and .value == $i.sponsor)] | length' "$tmp/ids.json") -eq 0 ]] || die "sponsor.pub is not new: its account id equals a party, the genesis or the template account"
 
 # 3. parameters from the repo's own nexus.toml / generate.sh constants (single source)
 stake=$(python3 -I -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["nexus"]["staking"]["stake_asset_id"])' "$here/nexus.toml")

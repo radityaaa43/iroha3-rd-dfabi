@@ -83,5 +83,23 @@ cg "$T/g1one.json" 1 && fail "check-genesis: SPONSOR_READ=1 accepts a sponsor mi
 cg "$T/gpool.json" 0 && fail "check-genesis: accepts a genesis that activates a pool" || ok "check-genesis: refuses ActivatePrivateSettlementPoolV1 in the genesis instructions"
 cg "$T/gword.json" 0 && ok "check-genesis: the word pool in a description is not a pool activation" || fail "check-genesis: refuses a genesis only for the word pool in a description"
 
+# ---- 4. the sponsor key is new: assemble-s5.sh and generate.sh refuse it equal to any party / peer / genesis key
+D="$T/pub"; mkdir "$D"; GK=ed0120GENKEY
+printf '%s\n' '[{"party":"bi","public_key":"ea0130P0","pop_hex":"p0"},{"party":"bank-a","public_key":"ea0130P1","pop_hex":"p1"},{"party":"bank-b","public_key":"ea0130P2","pop_hex":"p2"},{"party":"bank-c","public_key":"ea0130P3","pop_hex":"p3"}]' > "$D/peers.json"
+printf '%s\n' '{"bi":"ed0120BI","bi-gov":"ed0120GOV","bank-a":"ed0120A","bank-b":"ed0120B","bank-c":"ed0120C"}' > "$D/accounts.json"
+echo '{}' > "$D/kagemusha-mint-finality-public.json"; echo gk > "$T/gen.key"
+sponsor_guard() { # <sponsor.pub content>: stderr of assemble-s5.sh up to the guard (kagami is /bin/false: a fresh key fails later)
+  printf '%s\n' "$1" > "$D/sponsor.pub"
+  PUBLIC_DIR="$D" OUT_DIR="$T/o" GENESIS_PRIVATE_KEY_FILE="$T/gen.key" GENESIS_PUBLIC_KEY="$GK" KAGAMI=/bin/false IROHA=/bin/true network/assemble-s5.sh 2>&1
+}
+for dup in ed0120BI ed0120GOV ed0120C ed0120c ea0130P2 "$GK"; do
+  out=$(sponsor_guard "$dup"); rc=$?
+  [[ $rc == 2 && $out == *"sponsor.pub"*"not new"* ]] && ok "assemble-s5.sh refuses sponsor.pub = $dup (already a party, peer or genesis key)" || fail "assemble-s5.sh accepts sponsor.pub = $dup (rc=$rc: ${out:0:120})"
+done
+out=$(sponsor_guard ed0120FRESH); [[ $out != *"not new"* ]] && ok "assemble-s5.sh: a fresh sponsor.pub passes the guard" || fail "assemble-s5.sh refuses a fresh sponsor key: ${out:0:120}"
+printf '%s\n' '{"bi":"BI1","bank-a":"A1","bank-b":"B1","bank-c":"C1","sponsor":"A1"}' > "$T/pa.json"
+out=$(PARTY_ACCOUNTS="$T/pa.json" NETWORK_OUT="$T/gout" NETWORK_PUB="$T/gpub" network/generate.sh --aps 2>&1); rc=$?
+[[ $rc != 0 && $out == *"sponsor"*"not new"* && ! -e $T/gout ]] && ok "generate.sh --aps refuses a sponsor account equal to a party account before touching anything" || fail "generate.sh --aps accepts sponsor = bank-a (rc=$rc: ${out:0:120})"
+
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
