@@ -185,8 +185,9 @@ docs = [
                  "imagePullPolicy": "IfNotPresent",
                  "args": ["server", "/config/rd-dfabi.toml", "--listen", "0.0.0.0:8091"],
                  "ports": [{"name": "http", "containerPort": 8091}],
-                 # --aps: the prover peaks at ~1.1 GiB RSS (reports/b-aps.md); memory 2Gi/3Gi and cpu 1/2 as deploy/aps-run/render.py
-                 "resources": ({"requests": {"cpu": "1", "memory": "2Gi"}, "limits": {"cpu": "2", "memory": "3Gi"}} if aps
+                 # --aps: the prover peaks at ~1.1 GiB RSS (reports/b-aps.md); memory 2Gi/3Gi as deploy/aps-run/render.py. CPU limit 4
+                 # (the 4-vCPU node): the STARK prover is rayon-parallel and sizes its pool from the cgroup quota (2026-11-16).
+                 "resources": ({"requests": {"cpu": "1", "memory": "2Gi"}, "limits": {"cpu": "4", "memory": "3Gi"}} if aps
                                else {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}),
                  "securityContext": sec,
                  # One request at a time: /healthz is unanswered while a /dvp-native waits for Applied (up to 300 s). Liveness
