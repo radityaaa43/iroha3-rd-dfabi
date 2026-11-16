@@ -74,8 +74,21 @@ sp_id=$("$IROHA" tools address convert "$(tr -d '\n' < "$P/sponsor.pub")" | tail
 grep -q -F "$(tr -d '\n' < "$P/sponsor.pub")" "$m" && fail "raw sponsor public key appears in the manifest (ids must be I105)"
 [[ $(jq --arg s "$sp_id" '[.transactions[].instructions[] | objects | select(.Register.Account.id? == $s)] | length' "$m") -eq 1 ]] && ok "sponsor account registered once (own key, from public/sponsor.pub)" || fail "sponsor account registration"
 [[ $(jq -r --arg s "$sp_id" '[.transactions[].instructions[] | objects | select(.Mint.Asset.destination? | strings | endswith("#" + $s)) | .Mint.Asset.object] | join(",")' "$m") == 1000 ]] && ok "sponsor funded with 1000 XOR for fees" || fail "sponsor fee funding"
-[[ $(jq --arg s "$sp_id" '[.transactions[].instructions[] | objects | select(.Grant.Permission.destination? == $s or .Register.Role.grant_to? == $s)] | length' "$m") -eq 0 ]] && ok "sponsor holds no permission (no CanReadRestrictedDataspace until gate G2 says so)" || fail "sponsor has a grant or role in genesis"
-[[ $(jq '[.. | strings | select(test("pool"; "i"))] | length' "$m") -eq 0 ]] && ok "no pool in genesis (activation needs height >= 11)" || fail "genesis mentions a pool"
+# SPONSOR_READ (genesis parameter, default 0): set -> the sponsor holds CanReadRestrictedDataspace on dataspaces 1 and 2 (direct + role) and
+# nothing else; unset -> no permission, no role. Checked on the main manifest, then on a second assembly with the opposite value.
+sponsor_rows() { # <manifest> <sp_id> <0|1>
+  local want='[]'; [[ $3 == 1 ]] && want='[1,2]'
+  [[ $(jq -c --arg s "$2" '[.transactions[].instructions[] | objects | select(.Grant.Permission.destination? == $s)] | map(select(.Grant.Permission.object.name == "CanReadRestrictedDataspace") | .Grant.Permission.object.payload.dataspace) | sort' "$1") == "$want" \
+    && $(jq --arg s "$2" '[.transactions[].instructions[] | objects | select(.Grant.Permission.destination? == $s)] | length' "$1") -eq $(jq length <<<"$want") \
+    && $(jq -c --arg s "$2" '[.transactions[].instructions[] | objects | select(.Register.Role.grant_to? == $s) | .Register.Role.permissions[] | select(.name == "CanReadRestrictedDataspace") | .payload.dataspace] | sort' "$1") == "$want" \
+    && $(jq --arg s "$2" '[.transactions[].instructions[] | objects | select(.Register.Role.grant_to? == $s) | .Register.Role.permissions[]] | length' "$1") -eq $(jq length <<<"$want") ]] \
+    && ok "SPONSOR_READ=$3: sponsor holds CanReadRestrictedDataspace on $want and nothing else (direct + role)" || fail "SPONSOR_READ=$3: sponsor permissions differ from $want"
+}
+sponsor_rows "$m" "$sp_id" "${SPONSOR_READ:-0}"
+# the pools are not in genesis: no instruction named ActivatePrivateSettlementPoolV1 (activation needs height >= 11)
+[[ $(jq '[.transactions[].instructions[]? | .. | (if type == "object" then keys[] elif type == "string" then . else empty end) | select(contains("ActivatePrivateSettlementPoolV1"))] | length' "$m") -eq 0 ]] && ok "no ActivatePrivateSettlementPoolV1 in genesis (activation needs height >= 11)" || fail "genesis activates a pool"
+m2="$W/manifest-read.json"; other=$(( ${SPONSOR_READ:-0} == 1 ? 0 : 1 ))
+SPONSOR_READ=$other OUT_DIR="$W/public-read" KEEP_MANIFEST="$m2" network/assemble-s5.sh 2>"$W/err" && sponsor_rows "$m2" "$sp_id" "$other" || fail "assemble-s5.sh SPONSOR_READ=$other: $(tail -2 "$W/err")"
 python3 -I - "$P/peer.template.toml" <<'PY' && ok "peer template catalog and routing: ds-1/ds-2, lane-1/lane-2, no rd|dfabi|rupiah" || fail "peer template catalog is not neutral"
 import re, sys, tomllib
 n = tomllib.load(open(sys.argv[1], "rb"))["nexus"]

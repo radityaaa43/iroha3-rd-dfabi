@@ -61,5 +61,27 @@ for f in network/genesis-rd-dfabi.jq network/genesis-rd-dfabi-s5.jq; do
   done
 done
 
+# ---- 3. network/check-genesis.py (the genesis rows of network/check.sh) follows the SPONSOR_READ genesis parameter
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+gen() { jq -n '{transactions: []}' | jq --arg bi BI --arg a A --arg b B --arg c C --arg gen GEN --arg rd RDID --arg dfabi DFID --arg domain wonderland.ds-1 \
+  --argjson readds '[1,2]' --arg sponsor "$SPONSOR" --argjson sponsor_read "$1" -f network/genesis-rd-dfabi.jq; }
+gen false > "$T/g0.json"; gen true > "$T/g1.json"
+# pool activation smuggled in (wrapped, any depth) must be caught by its instruction name
+jq '.transactions[0].instructions += [{Custom:{payload:{ActivatePrivateSettlementPoolV1:{}}}}]' "$T/g0.json" > "$T/gpool.json"
+# a pool-ish word elsewhere (a description) is not an activation: the old substring check refused this
+jq '.transactions[1].instructions[1].Register.AssetDefinition.description += " pool of RD"' "$T/g0.json" > "$T/gword.json"
+# sponsor with a direct read grant but no role, and with a read grant on only one dataspace
+jq 'del(.transactions[0].instructions[] | select(.Register.Role.grant_to? == "sponsor-account-id"))' "$T/g1.json" > "$T/g1norole.json"
+jq 'del(.transactions[0].instructions[] | select(.Grant.Permission.destination? == "sponsor-account-id" and .Grant.Permission.object.payload.dataspace == 2))' "$T/g1.json" > "$T/g1one.json"
+cg() { python3 -I network/check-genesis.py "$1" network/nexus.toml "$SPONSOR" "$2" >/dev/null 2>&1; }
+cg "$T/g0.json" 0 && ok "check-genesis: SPONSOR_READ=0, sponsor without permission passes" || fail "check-genesis: SPONSOR_READ=0 on a genesis without sponsor permission"
+cg "$T/g1.json" 1 && ok "check-genesis: SPONSOR_READ=1, sponsor reads dataspaces 1 and 2 (direct + role) and nothing else passes" || fail "check-genesis: SPONSOR_READ=1 on a genesis with the sponsor read grants"
+cg "$T/g1.json" 0 && fail "check-genesis: SPONSOR_READ=0 accepts a sponsor that holds read grants" || ok "check-genesis: SPONSOR_READ=0 refuses a sponsor that holds read grants"
+cg "$T/g0.json" 1 && fail "check-genesis: SPONSOR_READ=1 accepts a sponsor without read grants" || ok "check-genesis: SPONSOR_READ=1 refuses a sponsor without read grants"
+cg "$T/g1norole.json" 1 && fail "check-genesis: SPONSOR_READ=1 accepts a sponsor without the role" || ok "check-genesis: SPONSOR_READ=1 refuses a sponsor without the role"
+cg "$T/g1one.json" 1 && fail "check-genesis: SPONSOR_READ=1 accepts a sponsor missing dataspace 2" || ok "check-genesis: SPONSOR_READ=1 refuses a sponsor missing dataspace 2"
+cg "$T/gpool.json" 0 && fail "check-genesis: accepts a genesis that activates a pool" || ok "check-genesis: refuses ActivatePrivateSettlementPoolV1 in the genesis instructions"
+cg "$T/gword.json" 0 && ok "check-genesis: the word pool in a description is not a pool activation" || fail "check-genesis: refuses a genesis only for the word pool in a description"
+
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"
