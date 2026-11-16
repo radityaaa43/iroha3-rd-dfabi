@@ -29,6 +29,10 @@ for p in bi bank-a bank-b bank-c; do
   grep -q 'mint-finality.seed\|private' <<<"$line" && fail "keygen $p printed a secret file name or key"
 done
 (( ${#lines[@]} == 4 )) || { echo "FAILED: keygen" >&2; exit 1; }
+# the neutral sponsor (design 4.4): own seed + note key on the operator PC; only its public account key goes to public/sponsor.pub
+sline=$(network/keygen-party.sh sponsor "$W/custody-sponsor" 2>"$W/err") || { fail "keygen sponsor: $(tail -3 "$W/err")"; echo "FAILED: keygen sponsor" >&2; exit 1; }
+jq -r .account_public_key <<<"$sline" > "$P/sponsor.pub"
+[[ -s $P/sponsor.pub && -s $W/custody-sponsor/sponsor.seed && -s $W/custody-sponsor/sponsor.note ]] && ok "keygen sponsor: sponsor.pub public, seed + note stay in custody" || fail "keygen sponsor outputs"
 printf '%s\n' "${lines[@]}" | jq -s '[.[] | {party, public_key, pop_hex}]' > "$P/peers.json"
 printf '%s\n' "${lines[@]}" | jq -s '(map({(.party): .account_public_key}) | add) + {"bi-gov": (map(select(.party=="bi"))[0].gov_account_public_key)}' > "$P/accounts.json"
 i=0; tri=()
@@ -65,6 +69,20 @@ grants() { jq -r --arg n "$1" '[.transactions[].instructions[] | objects | selec
   && ok "lane 1+2 stake is minted once per validator (20000 x4) before the lane Registers" || fail "lane stake mints: $(jq -c '[.transactions[] | select(any(.instructions[]?; type=="object" and has("RegisterPublicLaneValidator") and .RegisterPublicLaneValidator.lane_id != 0)) | .instructions[] | objects | select(has("Mint")) | .Mint.Asset.object]' "$m")"
 for k in $(jq -r '.[].public_key' "$P/peers.json"); do grep -q -F "$k" "$m" || fail "peer key $k missing from the manifest"; done
 for p in bi bank-a bank-b bank-c; do grep -q -F "$(jq -r --arg p "$p" '.[$p] // empty' "$P/accounts.json")" "$m" && fail "raw account public key of $p appears in the manifest (ids must be I105)"; done
+# neutral genesis + sponsor (design 4.1, 4.4)
+sp_id=$("$IROHA" tools address convert "$(tr -d '\n' < "$P/sponsor.pub")" | tail -1)
+grep -q -F "$(tr -d '\n' < "$P/sponsor.pub")" "$m" && fail "raw sponsor public key appears in the manifest (ids must be I105)"
+[[ $(jq --arg s "$sp_id" '[.transactions[].instructions[] | objects | select(.Register.Account.id? == $s)] | length' "$m") -eq 1 ]] && ok "sponsor account registered once (own key, from public/sponsor.pub)" || fail "sponsor account registration"
+[[ $(jq -r --arg s "$sp_id" '[.transactions[].instructions[] | objects | select(.Mint.Asset.destination? | strings | endswith("#" + $s)) | .Mint.Asset.object] | join(",")' "$m") == 1000 ]] && ok "sponsor funded with 1000 XOR for fees" || fail "sponsor fee funding"
+[[ $(jq --arg s "$sp_id" '[.transactions[].instructions[] | objects | select(.Grant.Permission.destination? == $s or .Register.Role.grant_to? == $s)] | length' "$m") -eq 0 ]] && ok "sponsor holds no permission (no CanReadRestrictedDataspace until gate G2 says so)" || fail "sponsor has a grant or role in genesis"
+[[ $(jq '[.. | strings | select(test("pool"; "i"))] | length' "$m") -eq 0 ]] && ok "no pool in genesis (activation needs height >= 11)" || fail "genesis mentions a pool"
+python3 -I - "$P/peer.template.toml" <<'PY' && ok "peer template catalog and routing: ds-1/ds-2, lane-1/lane-2, no rd|dfabi|rupiah" || fail "peer template catalog is not neutral"
+import re, sys, tomllib
+n = tomllib.load(open(sys.argv[1], "rb"))["nexus"]
+assert [d["alias"] for d in n["dataspace_catalog"]] == ["universal", "ds-1", "ds-2"]
+assert [l["alias"] for l in n["lane_catalog"]] == ["universal", "lane-1", "lane-2"]
+assert not re.search(r"rd|dfabi|rupiah", repr([n["lane_catalog"], n["dataspace_catalog"], n["routing_policy"]]), re.I)
+PY
 n=$(jq '[.transactions[].instructions[] | if type=="object" then keys[0] else "frame" end] | length' "$m"); ok "manifest has $n instructions"
 
 # per-org peer.toml: render with each org's own custody, then the real binary checks it against the signed genesis

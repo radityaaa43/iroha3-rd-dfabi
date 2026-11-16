@@ -55,6 +55,17 @@ done
 if jq -e '.gov_account_public_key|startswith("ed0120")' <<<"$(network/keygen-party.sh bi "$T/custody-bi2" 2>/dev/null)" >/dev/null; then ok "bi also gets bi-gov"; else fail "bi output lacks gov_account_public_key"; fi
 if network/keygen-party.sh bank-a "$T/custody-bank-a" >/dev/null 2>&1; then fail "keygen reused a non-empty custody dir"; else ok "keygen refuses an existing custody dir"; fi
 if network/keygen-party.sh nobody "$T/custody-x" >/dev/null 2>&1; then fail "keygen accepted an unknown party"; else ok "keygen refuses an unknown party"; fi
+# the neutral sponsor (design 4.4): operator PC only, account seed + note key and NOTHING else (no validator, transport, identity or mint-finality keys)
+c="$T/custody-sponsor"
+out=$(network/keygen-party.sh sponsor "$c" 2>"$T/err") || fail "keygen sponsor failed: $(cat "$T/err")"
+if [[ $(wc -l <<<"$out") -eq 1 ]] && jq -e '.party == "sponsor" and (.account_public_key|startswith("ed0120")) and (keys == ["account_public_key","party"])' <<<"$out" >/dev/null; then
+  ok "keygen sponsor prints one JSON line: party and account_public_key only"
+else
+  fail "keygen sponsor stdout: $out"
+fi
+grep -q 'MARKER' <<<"$out$(cat "$T/err")" && fail "keygen sponsor printed secret material"
+[[ -f $c/sponsor.seed && -f $c/sponsor.note ]] && ok "keygen sponsor: seed and note key in custody" || fail "keygen sponsor: seed or note missing"
+[[ $(find "$c" -type f | wc -l) -eq 2 && ! -e $c/validator && ! -e $c/transport && ! -e $c/identity ]] && ok "keygen sponsor: no validator/transport/identity/mint-finality keys" || fail "keygen sponsor wrote more than seed and note: $(ls -A "$c")"
 
 # ---- assemble.sh fixtures: PUBLIC ONLY
 P="$T/public"; mkdir "$P"
