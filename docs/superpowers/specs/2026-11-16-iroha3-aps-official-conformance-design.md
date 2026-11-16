@@ -1,6 +1,6 @@
 # Iroha 3: APS sesuai dokumentasi dan repo resmi — Desain
 
-Tanggal: 2026-11-16. Status: draf final, menunggu persetujuan user. Memperbarui
+Tanggal: 2026-11-16. Status: disetujui user ("okey setuju", 2026-11-16). Memperbarui
 `2026-10-23-iroha3-aps-rd-dfabi-design.md` dan `2026-11-10-iroha3-aps-all-flows-design.md`.
 
 Sumber resmi yang dipakai:
