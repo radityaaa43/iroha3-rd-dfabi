@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Check the rendered S13 pool-init manifests on stdin. Usage: check-poolinit.py <digest> <hash8> <chain-id> <rd-reserve> <dfabi-reserve>"""
+"""Check the rendered S13 pool-init manifests on stdin. Usage: check-poolinit.py <digest> <hash8> <chain-id> <rd-reserve> <dfabi-reserve>
+(the reserves are the TOTALS per asset; `rd-dfabi pool-init` gets them split 50/50 over the two dataspaces: --lane 1 --rd A --dfabi B --lane 2 --rd C --dfabi D)"""
 import json
 import sys
 import tomllib
@@ -90,9 +91,11 @@ if job:
             bad.append(f"command lacks {need!r} (origin notes on the PVC, bi.note linked only)")
     if "cp /keys" in cmd or "install -m 600 /keys" in cmd:
         bad.append("bi.note must not be copied onto the PVC")
-    for need in ("keys client-toml /work bi-gov", "--network-id-file /genesis/genesis.expected_hash", "pool-init /config/rd-dfabi.toml", f"--rd-reserve {rd}", f"--dfabi-reserve {dfabi}", "rm -f /work/bi-gov.seed", "pools_public_json="):
+    for need in ("keys client-toml /work bi-gov", "--network-id-file /genesis/genesis.expected_hash", f"pool-init /config/rd-dfabi.toml --lane 1 --rd {int(rd) // 2} --dfabi {int(dfabi) // 2} --lane 2 --rd {int(rd) // 2} --dfabi {int(dfabi) // 2}", "rm -f /work/bi-gov.seed", "pools_public_json="):
         if need not in cmd:
             bad.append(f"command lacks {need!r}")
+    if "--rd-reserve" in cmd or "--dfabi-reserve" in cmd:
+        bad.append("the old pool-init CLI (--rd-reserve/--dfabi-reserve) is gone: one pool per (dataspace, asset), --lane n --rd A --dfabi B")
     vols = {v["name"]: v for v in pod["volumes"]}
     secrets = {v["secret"]["secretName"]: v["secret"] for v in vols.values() if "secret" in v}
     if set(secrets) != {"bi-gov-key", "bi-keys", "iroha3-client-cert"}:

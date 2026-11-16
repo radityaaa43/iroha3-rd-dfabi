@@ -3,7 +3,7 @@
 (mint:… = rendered with --mint-enabled: the BI driver enables POST /mint; caps in the [auditor] table, parties from accounts.json;
 gw:<party>=<ip> = rendered with --remote-gw (bank-c): [tls.resolve] host -> ip:8443 and the same ip as a /32 ipBlock in driver-egress;
 aps:<pools.json> = a bank rendered with --aps --aps-pools <pools.json> (needs tls): coordinator_url, ConfigMap aps-pools = that file with bundles forced to [];
-aps:pvc = the BI driver rendered with --aps (no pools file): coordinator, the PVC pools-v2 rw at /pools, key_dir /pools/keys with the Secret keys linked in; for BI gw:bank-c=<ip> is the bank-c gateway-lb address, NOT a [tls.resolve] entry)"""
+aps:pvc = the BI driver rendered with --aps (no pools file): coordinator, max_carrier_bytes (carrier:<n>, default 4194304 = upstream default, nexus.toml omits it), [aps.sponsor] name sponsor dir /keys-sponsor with Secret sponsor-keys mounted read-only there (BI only), the PVC pools-v2 rw at /pools, key_dir /pools/keys with the Secret keys linked in; for BI gw:bank-c=<ip> is the bank-c gateway-lb address, NOT a [tls.resolve] entry)"""
 import json
 import sys
 import tomllib
@@ -12,8 +12,9 @@ import yaml
 
 party, digest, h8, chain = sys.argv[1:5]
 mint = next((a for a in sys.argv[5:] if a.startswith("mint:")), None)
+carrier = int(next((a[8:] for a in sys.argv[5:] if a.startswith("carrier:")), 4194304))  # max_carrier_bytes of [nexus.atomic_private_settlement]; omitted in nexus.toml -> the upstream default (iroha_config defaults.rs)
 aps = next((a[4:] for a in sys.argv[5:] if a.startswith("aps:")), None)  # pools.json given to --aps-pools
-args5 = [a for a in sys.argv[5:] if not a.startswith(("mint:", "aps:"))]
+args5 = [a for a in sys.argv[5:] if not a.startswith(("mint:", "aps:", "carrier:"))]
 tlsmode = bool(args5) and args5[0] == "tls"  # rendered with --audit-tls (iroha3 S13 transport A)
 gw = dict(a[3:].split("=") for a in args5[1:] if a.startswith("gw:")) if tlsmode else {}  # --remote-gw party=ip (bank-c: gateways of cluster 1)
 remote = [a for a in args5[1:] if not a.startswith("gw:")] if tlsmode else []  # --remote-gw-cidr values (gateways on the OTHER cluster, ipBlock TCP 8443)
@@ -93,7 +94,9 @@ if cm:
             if cm["data"]["rd-dfabi.toml"].index("pools_file") > cm["data"]["rd-dfabi.toml"].index("["):
                 bad.append("pools_file must be a TOP-LEVEL key (before the first table)")
             # BI [aps.peers] (node-build T2 config.rs ApsConfig.peers): each party's ACCOUNT public key (accounts.json) -> its gateway URL, bi itself included; bank-c keeps the in-cluster host (SNI/SAN), pinned to its LB ip by [tls.resolve] above
-            want_aps = {"coordinator": True, "peers": {accounts[q]: f"https://gateway.rd-iroha3-{q}.svc.cluster.local:8443" for q in ("bi", "bank-a", "bank-b", "bank-c")}} if party == "bi" else {"coordinator_url": COORD_URL}
+            # BI: max_carrier_bytes = the governed value of the peers' [nexus.atomic_private_settlement]; [aps.sponsor] = the neutral sponsor's key dir (design 4.4), mounted from Secret sponsor-keys below
+            want_aps = {"coordinator": True, "max_carrier_bytes": carrier, "sponsor": {"name": "sponsor", "dir": "/keys-sponsor"},
+                        "peers": {accounts[q]: f"https://gateway.rd-iroha3-{q}.svc.cluster.local:8443" for q in ("bi", "bank-a", "bank-b", "bank-c")}} if party == "bi" else {"coordinator_url": COORD_URL}
             if cfg.get("aps") != want_aps:
                 bad.append(f"[aps] must be {want_aps}: {cfg.get('aps')}")
             if party == "bi":  # settle() uses plain-HTTP iroha client calls to all four committee Torii: through the gw-tls sidecar on loopback 18101..18104
@@ -166,7 +169,22 @@ if dep:
     vols = {v["name"]: v for v in pod["volumes"]}
     all_secret_vols = [v for v in pod["volumes"] if "secret" in v]
     secret_vols = [v for v in all_secret_vols if v["secret"]["secretName"] == f"{party}-keys"]
-    others = [v for v in all_secret_vols if v["secret"]["secretName"] != f"{party}-keys"]
+    sponsor_vols = [v for v in all_secret_vols if v["secret"]["secretName"] == "sponsor-keys"]
+    others = [v for v in all_secret_vols if v["secret"]["secretName"] not in (f"{party}-keys", "sponsor-keys")]
+    # the neutral sponsor's keys (design 4.4): the BI coordinator driver ONLY, and only with --aps. Three read-only subPath mounts (a Secret volume file is a symlink; client.toml must be a regular file as above)
+    if party == "bi" and aps is not None:
+        want_sv = {"name": "sponsor-keys", "secret": {"secretName": "sponsor-keys", "defaultMode": 0o400,
+                                                     "items": [{"key": k, "path": k} for k in ("sponsor.seed", "sponsor.note", "client.toml")]}}
+        if sponsor_vols != [want_sv]:
+            bad.append(f"BI --aps: Secret volume sponsor-keys (sponsor.seed, sponsor.note, client.toml, 0400) exactly once: {sponsor_vols}")
+        want_sm = {f"/keys-sponsor/{k}": ("sponsor-keys", k, True) for k in ("sponsor.seed", "sponsor.note", "client.toml")}
+        got_sm = {m["mountPath"]: (m["name"], m.get("subPath"), m.get("readOnly")) for m in c["volumeMounts"] if m["mountPath"].startswith("/keys-sponsor") or m["name"] == "sponsor-keys"}
+        if got_sm != want_sm:
+            bad.append(f"BI --aps: sponsor-keys must be mounted read-only (subPath files) at /keys-sponsor only: {got_sm}")
+        if any(m["name"] == "sponsor-keys" for i in pod.get("initContainers", []) for m in i.get("volumeMounts", [])):
+            bad.append("the sponsor keys must not be mounted into an init container (the driver container only)")
+    elif sponsor_vols or any(m["name"] == "sponsor-keys" or m["mountPath"].startswith("/keys-sponsor") for m in c["volumeMounts"]):
+        bad.append(f"the sponsor keys belong to the BI coordinator driver only ({party}, aps={aps is not None}): {sponsor_vols}")
     if tlsmode:
         want_other = [{"name": "client-cert", "secret": {"secretName": "iroha3-client-cert", "defaultMode": 0o400,
                                                           "items": [{"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"}]}}]

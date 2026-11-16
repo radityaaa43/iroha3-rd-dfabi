@@ -17,6 +17,10 @@ jq -n '[ "bi","bank-a","bank-b","bank-c" | {party: ., public_key: ("ea0130" + .)
 jq -n '{bi:"ed0120aa","bank-a":"ed0120bb","bank-b":"ed0120cc","bank-c":"ed0120dd","bi-gov":"ed0120ee"}' > "$P/accounts.json"
 H8=${H64:0:8}
 
+# The bank-a and bank-b auditors are RETIRED (2026-11-16): the renderer refuses them unless AUDITOR_LEGACY_RENDER=1. This test exercises the retired code, so it sets it;
+# the live-namespace tests (egress union, probe selectors) never render a bank auditor.
+export AUDITOR_LEGACY_RENDER=1
+
 refuse() { # <label> <expected message part> <args...>
   local label=$1 part=$2; shift 2
   local err rc
@@ -32,6 +36,15 @@ refuse "a missing public dir" "public dir" bi "$D" "$T/none"
 mkdir "$T/p2"; cp "$P/chain_id" "$P/peers.json" "$T/p2/"; refuse "a public dir without genesis.expected_hash" "genesis.expected_hash" bi "$D" "$T/p2"
 mkdir "$T/p3"; cp "$P"/* "$T/p3/"; : > "$T/p3/x.seed"; refuse "a public dir holding a seed" "private material" bi "$D" "$T/p3"
 
+for p in bank-a bank-b; do
+  err=$(env -u AUDITOR_LEGACY_RENDER "$R" "$p" "$D" "$P" 2>&1 >/dev/null); rc=$?
+  [[ $rc -ne 0 && $err == *"RETIRED 2026-11-16"* ]] && ok "$p: the retired auditor renderer exits non-zero (RETIRED 2026-11-16)" || fail "$p: retired renderer rc=$rc: $err"
+  env -u AUDITOR_LEGACY_RENDER "$R" "$p" "$D" "$P" --keys-in-pvc >/dev/null 2>&1 && fail "$p --keys-in-pvc rendered although retired" || ok "$p --keys-in-pvc is retired too"
+done
+env -u AUDITOR_LEGACY_RENDER "$R" bi "$D" "$P" >/dev/null 2>&1 && ok "bi: the BI auditor still renders (it is the only auditor)" || fail "bi: the BI auditor must still render"
+for f in deploy/auditor/render.py deploy/auditor/render.sh deploy/aps-run/render.py deploy/aps-run/render.sh; do
+  head -6 "$f" | grep -q 'RETIRED 2026-11-16' && ok "$f: header RETIRED 2026-11-16" || fail "$f: header lacks RETIRED 2026-11-16"
+done
 for p in bi bank-a bank-b; do
   out=$("$R" "$p" "$D" "$P" 2>&1) || { fail "$p: render failed: $out"; continue; }
   grep -q '@[A-Z_]*@' <<<"$out" && fail "$p: unreplaced placeholder in output"
