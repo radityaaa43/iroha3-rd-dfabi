@@ -1,6 +1,6 @@
 # Iroha 3: APS sesuai dokumentasi dan repo resmi — Desain
 
-Tanggal: 2026-11-16. Status: draf, menunggu persetujuan user. Memperbarui
+Tanggal: 2026-11-16. Status: draf final, menunggu persetujuan user. Memperbarui
 `2026-10-23-iroha3-aps-rd-dfabi-design.md` dan `2026-11-10-iroha3-aps-all-flows-design.md`.
 
 Sumber resmi yang dipakai:
@@ -221,7 +221,20 @@ Gerbang sebelum reset (dijalankan di chain SEKARANG, tanpa mengganggu pool lama)
 - Saldo awal bank setelah reset (usul: sama dengan saldo per 2026-11-16 12:40Z, dibulatkan).
 - Urutan dan pembagian PR (node-build driver, iroha3 network/deploy, frontend).
 
-## 8. Dampak operasional
+## 8. Persetujuan dan jalur lama (jawaban user 2026-11-16: "1a 2a")
+
+- **Titik GO user** (selain itu Claude jalan sendiri dan melapor):
+  1. sebelum gerbang G1-G4 di chain sekarang (pool tambahan, akun sponsor, uji restart);
+  2. sebelum snapshot + reset chain (hapus isi PVC, genesis dan kunci sponsor baru, roll peer,
+     driver, auditor);
+  3. sebelum roll Lensa ke chain baru.
+- Perubahan Lensa dikerjakan Claude sendiri lewat PR frontend (seperti PR #131); sesi fe tidak aktif.
+- **Jalur lama dipensiunkan**: Job `aps-run` (pool per trade, `min_approvals = 2`) dan Deployment
+  auditor bank-a/bank-b dihapus dari cluster pada saat reset. Kunci auditor dan PVC
+  `audit-store` mereka **tidak dihapus** (disimpan untuk retensi). Manifest/renderer `deploy/aps-run`
+  dan auditor bank ditandai pensiun di repo.
+
+## 9. Dampak operasional
 
 - Downtime iroha3 di Lensa selama reset dan re-funding (perkiraan 1-2 jam); model lain di Lensa
   tidak terganggu. Sesi lain (besu, fabricx) dikabari sebelum reset; Lensa roll lewat koordinasi
