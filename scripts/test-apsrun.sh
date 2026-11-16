@@ -6,6 +6,12 @@ R=deploy/aps-run/render.sh
 fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 ok() { echo "ok:   $*"; }
+# The aps-run renderer is RETIRED (2026-11-16): it exits 2 unless APSRUN_LEGACY_RENDER=1. This test exercises the retired code, so it sets it.
+err=$(env -u APSRUN_LEGACY_RENDER "$R" 2>&1 >/dev/null); rc=$?
+[[ $rc -eq 2 && $err == *"retired 2026-11-16"* ]] && ok "retired: render.sh exits 2 without APSRUN_LEGACY_RENDER" || fail "retired renderer rc=$rc: $err"
+err=$(env -u APSRUN_LEGACY_RENDER python3 -I deploy/aps-run/render.py 2>&1 >/dev/null); rc=$?
+[[ $rc -eq 2 && $err == *"retired 2026-11-16"* ]] && ok "retired: render.py exits 2 without APSRUN_LEGACY_RENDER" || fail "retired render.py rc=$rc: $err"
+export APSRUN_LEGACY_RENDER=1
 T=$(mktemp -d); trap 'rm -r -- "$T"' EXIT
 D=sha256:$(printf 'a%.0s' $(seq 1 64))
 P="$T/public"; mkdir -p "$P/gateway-ca"
