@@ -1,10 +1,10 @@
-# RD and DFABI as DataspaceRestricted assets homed in ONE restricted dataspace ($ds, e.g. ds-rd).
+# RD and DFABI as DataspaceRestricted assets homed in ONE restricted dataspace (domain $domain = wonderland.ds-1).
 # One dataspace for both on purpose: a DvpIsi whose legs sit in two different restricted dataspaces
 # cannot execute (core isi/settlement.rs dvp_rejects_counterparty_consent_outside_execution_dataspace:
 # "committed public balance scope .. does not match execution dataspace .."), so the DvP pair shares a home.
 # A restricted definition needs an explicit owning domain (isi/domain.rs ensure_asset_definition_domain_context);
 # execution takes the home dataspace from that domain's dataspace segment, the router from the alias first.
-# Both are "wonderland.$ds" / "<name>#wonderland.$ds" here, so they agree.
+# Both are "$domain" / "<name>#$domain" here, so they agree.
 def adef($id; $name; $desc): {Register:{AssetDefinition:{alias:null,balance_scope_policy:"DataspaceRestricted",description:$desc,id:$id,logo:null,metadata:{},mintable:"Infinitely",name:$name,owning_domain:$domain,spec:{scale:0}}}};
 def acct($id): {Register:{Account:{id:$id,label:null,metadata:{},opaque_ids:[],uaid:null}}};
 def xor($id): {Mint:{Asset:{destination:("6TEAJqbb8oEPmLncoNiMRbLEK6tw#" + $id),object:"1000"}}};

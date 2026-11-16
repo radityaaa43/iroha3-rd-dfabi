@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Print the S13 pool-activation Job (iroha3 PLAN S13; ANALYST 2-of-3 BI + orgs A and B; lead transport A). Writes nothing, calls no cluster,
+# Print the pool-activation Job (iroha3 PLAN S13; BI is the only auditor, user 2026-11-13 R1; APS conformance design 4.1). Writes nothing, calls no cluster,
 # renders NO Secret. Namespace rd-iroha3-bi ONLY.
 #   deploy/pool-init/render.sh <sha256:digest> <public-dir> <rd-reserve> <dfabi-reserve>
 # The reserves are the TOTALS per asset and must be even: `rd-dfabi pool-init` creates one pool per (dataspace, asset), four in all, and gets each asset split 50/50
 # over the two dataspaces: `pool-init <config> --lane 1 --rd A --dfabi B --lane 2 --rd C --dfabi D` (A = C = rd-reserve/2, B = D = dfabi-reserve/2).
 # The Job derives the bi-gov client.toml from Secret `bi-gov-key` (key bi-gov.seed, the governance account of genesis S3,
 # CanEnactGovernance) into an emptyDir, removes the seed copy, then runs `rd-dfabi pool-init` ONCE: the pools of RD and DFABI are born with
-# `[audit] min_approvals = 2` over the three gateways (bi, bank-a, bank-b; mutual TLS from Secret iroha3-client-cert, pinned server CAs
+# `[audit] min_approvals = 1` over the BI gateway only (mutual TLS from Secret iroha3-client-cert, pinned server CA
 # from the EXISTING ConfigMap gateway-server-cas of `driver/render.sh --audit-tls`). bi.note (only that key of Secret bi-keys) is the BI
 # note secret the pool funding needs; the BI seed and the auditor keys are never mounted. backoffLimit 0: a failed run is NOT retried.
 # NetworkPolicy pool-init-egress (R17, key-mounting Job): the Job carries rd/egress-locked=true and may reach ONLY cluster DNS, BI's own Torii (8080)
-# and the three gateways (8443); everything else is denied (our namespaces have no allow-all egress policy to exclude it from).
+# and the BI gateway (8443); everything else is denied (our namespaces have no allow-all egress policy to exclude it from).
 # PVC pools-v2 (1Gi) holds pools.json (public data, single writer = BI; S15 reuses it). Reserves are explicit amounts, no default.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
