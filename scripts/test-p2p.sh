@@ -31,5 +31,9 @@ for p in bi bank-a bank-b; do
 done
 out=$("$R" --cluster 2 --acl-id $ACL --external-cidr $X1 bank-c 2>&1) || fail "bank-c: render failed: $out"
 python3 -I scripts/check-p2p.py bank-c $ACL $X1 <<<"$out" || fails=$((fails + 1))
+# A render without publishNotReadyAddresses must fail the checker (RED guard for the cross-cluster restart deadlock).
+if python3 -I scripts/check-p2p.py bi $ACL $X1 <<<"$("$R" --acl-id $ACL --external-cidr $X1 bi | grep -v publishNotReadyAddresses)" 2>/dev/null; then
+  fail "checker accepted a p2p Service without publishNotReadyAddresses"
+else ok "checker rejects a p2p Service without publishNotReadyAddresses"; fi
 if (( fails )); then echo "FAILED: $fails check(s)" >&2; exit 1; fi
 echo "PASS"

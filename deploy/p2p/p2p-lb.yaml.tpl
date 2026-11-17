@@ -5,6 +5,9 @@
 # loadBalancerSourceRanges = the peer cluster's egress address(es) as /32 entries (render.sh --external-cidr, never wider).
 # loadBalancerSourceRanges creates no ACL on the Alibaba CLB (besu's read-only diagnosis): the real whitelist is the pre-created
 # access-control list named by --acl-id (annotations below). The peers-p2p NetworkPolicy (ipBlock, same /32 list) is the second layer.
+# publishNotReadyAddresses: true is required. A peer's /readyz needs its peers, and a peer in the other cluster (bank-c) reaches this pod
+# only through this LB. A Service publishes Ready pods only, so after all validators restart at once no pod is Ready, no LB has an
+# endpoint, no peer reaches another, and none ever becomes Ready (deadlock, live incident 2026-11-17). The headless peer Service sets it too.
 apiVersion: v1
 kind: Service
 metadata:
@@ -19,6 +22,7 @@ metadata:
     rd-iroha3/party: "@PARTY@"
 spec:
   type: LoadBalancer
+  publishNotReadyAddresses: true
   externalTrafficPolicy: Local
   loadBalancerSourceRanges:
 @SOURCE_RANGES@
