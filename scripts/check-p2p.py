@@ -26,6 +26,10 @@ else:
         bad.append(f"loadBalancerSourceRanges must be exactly the given /32 list {want_ranges}: {s.get('loadBalancerSourceRanges')}")
     if s.get("externalTrafficPolicy") != "Local":
         bad.append("externalTrafficPolicy must be Local (keeps the client source IP for the peers-p2p ipBlock)")
+    # Must publish not-ready pods: /readyz needs the peers, and cross-cluster peers reach this pod only via this LB. Without it a
+    # simultaneous restart of all validators deadlocks (no pod Ready -> LB has no endpoints -> no pod becomes Ready). Live incident 2026-11-17.
+    if s.get("publishNotReadyAddresses") is not True:
+        bad.append(f"publishNotReadyAddresses must be true (cross-cluster restart deadlock): {s.get('publishNotReadyAddresses')}")
     if "clusterIP" in s and s["clusterIP"] == "None":
         bad.append("a LoadBalancer Service cannot be headless")
     want_ann = {
