@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# RETIRED 2026-11-16 (APS conformance design 8): the aps-run Job (a pool per trade, min_approvals = 2) is removed at the chain reset; the live path is the BI coordinator driver (deploy/driver/render.sh --aps). Kept as a record: exits 2 unless APSRUN_LEGACY_RENDER=1 (its own tests).
 # Print ONE BI coordinator Job for the shared private-settlement pools (iroha3 S13 RED, S15). Writes nothing, calls no cluster,
 # renders NO Secret. Namespace rd-iroha3-bi ONLY.
 #   deploy/aps-run/render.sh <sha256:digest> <public-dir> <name> <bank-c-gateway-lb-ipv4> <rd-dfabi command...>
@@ -12,6 +13,7 @@
 # where pool-init wrote BI's origin notes. The governance seed is never mounted. backoffLimit 0: a retry would be a NEW bundle.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+[[ ${APSRUN_LEGACY_RENDER:-} == 1 ]] || { echo "render.sh: the aps-run Job is retired 2026-11-16 (BI coordinator driver: deploy/driver/render.sh --aps; nothing is rendered). APSRUN_LEGACY_RENDER=1 only for the retired renderer's own tests." >&2; exit 2; }
 usage() { echo "usage: render.sh <sha256:<64 hex>> <public-dir> <name> <bank-c-gw-ipv4> pay --asset rd|dfabi --from bi --to bi --amount N | wallet --party bi | pool-history --asset rd|dfabi" >&2; exit 2; }
 (( $# >= 5 )) || usage
 digest=$1 pub=$2 name=$3 ip=$4; shift 4

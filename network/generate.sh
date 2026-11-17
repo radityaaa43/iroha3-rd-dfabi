@@ -8,8 +8,9 @@
 #        settlement (gate G1b): merge network/nexus.toml into every peer.toml,
 #        add RD/DFABI (genesis-rd-dfabi.jq) and the lane 1/2 validator
 #        instructions to the genesis, then validate and re-sign it. Needs
-#        PARTY_ACCOUNTS=<json file> {"bi":..,"bank-a":..,"bank-b":..,"bank-c":..}
-#        with the public account ids of the four parties (not secret).
+#        PARTY_ACCOUNTS=<json file> {"bi":..,"bank-a":..,"bank-b":..,"bank-c":..,"sponsor":..}
+#        with the public account ids of the four parties and of the neutral sponsor (not secret).
+#        SPONSOR_READ=1 also grants the sponsor CanReadRestrictedDataspace on the restricted dataspaces (default 0: gate G2 decides).
 # NETWORK_OUT / NETWORK_PUB redirect out/ and public/ (testing); NETWORK_OUT
 # must then be outside the repo or gitignored by the caller.
 set -euo pipefail
@@ -27,6 +28,13 @@ cd "$(dirname "$0")"
 HERE="$PWD"
 OUT="${NETWORK_OUT:-$PWD/out}"
 PUB="${NETWORK_PUB:-$PWD/public}"
+
+# the neutral sponsor needs its own key: its account id may not equal a party account (the genesis account is checked below)
+if [[ $APS == 1 && -n ${PARTY_ACCOUNTS:-} && -s $PARTY_ACCOUNTS ]] \
+   && ! jq -e '.sponsor as $s | [to_entries[] | select(.key != "sponsor" and .value == $s)] | length == 0' "$PARTY_ACCOUNTS" >/dev/null; then
+  echo "refusing to run: the sponsor account is not new (it equals a party account in PARTY_ACCOUNTS)." >&2
+  exit 1
+fi
 
 if [[ -e $OUT ]]; then
   echo "refusing to run: $OUT already exists (would overwrite keys in use)." >&2
@@ -164,14 +172,14 @@ PY
 # the signing key and the localnet manifest; replaces the manifest and the signed
 # block in $RAW so the public bundle below carries the lane-aware genesis.
 if [[ $APS == 1 ]]; then
-  : "${PARTY_ACCOUNTS:?--aps needs PARTY_ACCOUNTS=<json file with the 4 party account ids>}"
+  : "${PARTY_ACCOUNTS:?--aps needs PARTY_ACCOUNTS=<json file with the 4 party account ids and the sponsor account id>}"
   # Definition ids are opaque values (not checked against their owning domain), kept equal to the
   # ones the frontend (bootstrap-iroha3.ts) and the earlier Global-asset network use:
   # AssetDefinitionId::derive_from_components("rd"|"dfabi", "wonderland").
   RD_ID=7onbjg2gRXveoAAUFsohCZyGW98t
   DFABI_ID=4mBWK1JCwQdHLDPpuVKc56eLsXka
   # RD and DFABI are DataspaceRestricted and share this home dataspace (see genesis-rd-dfabi.jq for why one).
-  HOME_DS=ds-rd
+  HOME_DS=ds-1
 
   python3 -I - "$HERE/nexus.toml" "$OUT" "${PARTIES[@]}" <<'PY'
 import json, sys, tomllib
@@ -273,6 +281,7 @@ PY
   [[ ${#LANES[@]} -eq 2 ]] || { echo "nexus.toml: expected lanes 1 and 2 besides lane 0" >&2; exit 1; }
 
   GEN_ACCOUNT="$(jq -er 'first(.transactions[].instructions[] | objects | select(.Grant.Permission.object.name == "CanSetParameters")) | .Grant.Permission.destination' "$RAW/genesis.json")"
+  [[ $(jq -er '.sponsor' "$PARTY_ACCOUNTS") != "$GEN_ACCOUNT" ]] || { echo "the sponsor account is not new (it is the genesis account)" >&2; exit 1; }
   # RD/DFABI first (genesis-rd-dfabi.jq), then the lane validators in a transaction of
   # their own, cloned from the lane-0 bootstrap kagami wrote: the same 4
   # validators stake a further 10000 each per lane (mint + register + activate,
@@ -281,6 +290,7 @@ PY
   # readds = every restricted dataspace id = lane indexes 1..n (check.sh asserts lane index == dataspace id)
   jq --arg bi "$(jq -er '.["bi"]' "$PARTY_ACCOUNTS")" --arg a "$(jq -er '.["bank-a"]' "$PARTY_ACCOUNTS")" \
      --arg b "$(jq -er '.["bank-b"]' "$PARTY_ACCOUNTS")" --arg c "$(jq -er '.["bank-c"]' "$PARTY_ACCOUNTS")" \
+     --arg sponsor "$(jq -er '.["sponsor"]' "$PARTY_ACCOUNTS")" --argjson sponsor_read "$([[ ${SPONSOR_READ:-0} == 1 ]] && echo true || echo false)" \
      --arg gen "$GEN_ACCOUNT" --arg rd "$RD_ID" --arg dfabi "$DFABI_ID" \
      --arg domain "wonderland.$HOME_DS" \
      --argjson readds "$(printf '%s\n' "${LANES[@]}" | jq -sc .)" \

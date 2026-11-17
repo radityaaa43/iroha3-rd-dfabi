@@ -4,7 +4,8 @@
 #   Inputs in $PUBLIC_DIR (default network/public): peers.json [{party,public_key,pop_hex}] x4, accounts.json
 #     {bi,"bi-gov",bank-a,bank-b,bank-c} -> account PUBLIC keys, kagemusha-mint-finality-public.json (from `rd-dfabi keys
 #     mint-finality-roster`). No seed, note, hybrid or private key may be in $PUBLIC_DIR (refused).
-#   Env: GENESIS_PRIVATE_KEY_FILE, GENESIS_PUBLIC_KEY (required); KAGAMI, IROHA (default kagami, iroha; wrappers must see the
+#     sponsor.pub (the neutral sponsor's ACCOUNT public key, one line; network/keygen-party.sh sponsor) -> its account is registered and funded for fees.
+#   Env: GENESIS_PRIVATE_KEY_FILE, GENESIS_PUBLIC_KEY (required); SPONSOR_READ=1 also grants the sponsor CanReadRestrictedDataspace on the restricted dataspaces (default 0); KAGAMI, IROHA (default kagami, iroha; wrappers must see the
 #     same absolute paths); OUT_DIR (default $PUBLIC_DIR); EPOCH_LENGTH (default 1152921504606846976 = 2^60, user decision
 #     "iroha iii", below u64::MAX/3); CHAIN_ID (default fresh uuid); KEEP_MANIFEST=<file> also writes the unsigned manifest.
 #   Outputs in $OUT_DIR: genesis.signed.nrt, genesis.expected_hash, genesis.public_key, chain_id, peer.template.toml and the unsigned
@@ -26,6 +27,7 @@ die() { echo "assemble-s5.sh: $*" >&2; exit 2; }
   || die "EPOCH_LENGTH must be a positive integer below u64::MAX/3 = 6148914691236517205 (iroha_data_model parameter/system.rs:538-542)"
 [[ -z $(find "$PUBLIC_DIR" -type f \( -name '*.seed' -o -name '*.note' -o -name '*.hybrid' -o -name 'private.key' \) 2>/dev/null) ]] \
   || die "secret material (*.seed, *.note, *.hybrid, private.key) found in $PUBLIC_DIR; keep it in the org's custody"
+sponsor_pub=$PUBLIC_DIR/sponsor.pub
 peers=$PUBLIC_DIR/peers.json accts=$PUBLIC_DIR/accounts.json params=$PUBLIC_DIR/kagemusha-mint-finality-public.json
 [[ -f $peers ]] || die "$peers is missing"
 [[ $(jq 'length' "$peers") -eq 4 ]] || die "peers.json must list exactly 4 peers (3f+1 committee)"
@@ -36,6 +38,10 @@ for a in bi bi-gov bank-a bank-b bank-c; do
   [[ $(jq -r --arg a "$a" '.[$a] // ""' "$accts") != "" ]] || die "accounts.json lacks the public key of $a"
 done
 [[ -f $params ]] || die "$params is missing (public KAGEMUSHA mint-finality parameters)"
+[[ -s $sponsor_pub ]] || die "$sponsor_pub is missing (the sponsor's account public key: network/keygen-party.sh sponsor)"
+# the sponsor is neutral: its key must be new, never a party / peer / genesis key (a shared key would make it a party)
+dup=$({ jq -r '.[]' "$accts"; jq -r '.[].public_key' "$peers"; echo "$GENESIS_PUBLIC_KEY"; } | tr 'A-Z' 'a-z' | grep -Fxc -- "$(tr -d '[:space:]' < "$sponsor_pub" | tr 'A-Z' 'a-z')") || true
+[[ $dup -eq 0 ]] || die "sponsor.pub is not new: it equals a key in accounts.json, peers.json or the genesis key (generate the sponsor with its own network/keygen-party.sh sponsor)"
 
 tmp=$(mktemp -d); chmod 700 "$tmp"; trap '[[ -n ${KEEP_TMP:-} ]] || rm -rf "$tmp"' EXIT # KEEP_TMP=1 only for debugging with throwaway keys
 chain=${CHAIN_ID:-$(uuidgen | tr 'A-Z' 'a-z')}
@@ -50,9 +56,11 @@ old_client_pk=$(sed -n 's/^public_key *= *"\(.*\)"/\1/p' "$tmp/ln/client.toml" |
 jq -n --arg og "$(conv "$(tr -d '\n' < "$tmp/ln/genesis.public_key")")" --arg oc "$(conv "$old_client_pk")" --arg g "$(conv "$GENESIS_PUBLIC_KEY")" \
   --arg bi "$(conv "$(jq -r '.bi' "$accts")")" --arg gov "$(conv "$(jq -r '."bi-gov"' "$accts")")" \
   --arg a "$(conv "$(jq -r '."bank-a"' "$accts")")" --arg b "$(conv "$(jq -r '."bank-b"' "$accts")")" --arg c "$(conv "$(jq -r '."bank-c"' "$accts")")" \
-  '{old_gen:$og, old_client:$oc, gen:$g, bi:$bi, "bi-gov":$gov, "bank-a":$a, "bank-b":$b, "bank-c":$c}' > "$tmp/ids.json"
+  --arg sp "$(conv "$(tr -d '\n' < "$sponsor_pub")")" \
+  '{old_gen:$og, old_client:$oc, gen:$g, bi:$bi, "bi-gov":$gov, "bank-a":$a, "bank-b":$b, "bank-c":$c, sponsor:$sp}' > "$tmp/ids.json"
 empty=$(jq -r 'to_entries[] | select(.value == "") | .key' "$tmp/ids.json" | tr '\n' ' ')
 [[ -z $empty ]] || die "address conversion returned nothing for: $empty"
+[[ $(jq '. as $i | [to_entries[] | select(.key != "sponsor" and .value == $i.sponsor)] | length' "$tmp/ids.json") -eq 0 ]] || die "sponsor.pub is not new: its account id equals a party, the genesis or the template account"
 
 # 3. parameters from the repo's own nexus.toml / generate.sh constants (single source)
 stake=$(python3 -I -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["nexus"]["staking"]["stake_asset_id"])' "$here/nexus.toml")
@@ -62,9 +70,10 @@ rd_id=$(sed -n 's/^  RD_ID=\(.*\)$/\1/p' "$here/generate.sh"); df_id=$(sed -n 's
 [[ -n $rd_id && -n $df_id ]] || die "RD_ID / DFABI_ID not found in generate.sh"
 
 # 4. genesis manifest and the public peer.toml template
+sponsor_read=(); [[ ${SPONSOR_READ:-0} == 1 ]] && sponsor_read=(--sponsor-read)
 python3 -I "$here/s5.py" genesis --localnet "$tmp/ln" --peers "$peers" --ids "$tmp/ids.json" --params "$params" --epoch-length "$EPOCH_LENGTH" \
   --lanes "${lanes[@]}" --stake-asset "$stake" --rd-id "$rd_id" --dfabi-id "$df_id" --jq-file "$here/genesis-rd-dfabi-s5.jq" \
-  --generate-sh "$here/generate.sh" --out "$tmp/genesis.json"
+  --generate-sh "$here/generate.sh" ${sponsor_read[@]+"${sponsor_read[@]}"} --out "$tmp/genesis.json"
 python3 -I "$here/s5.py" template --localnet "$tmp/ln" --peers "$peers" --ids "$tmp/ids.json" --nexus "$here/nexus.toml" \
   --genesis-public-key "$GENESIS_PUBLIC_KEY" --out "$tmp/peer.template.toml"
 "$KAGAMI" genesis validate "$tmp/genesis.json"

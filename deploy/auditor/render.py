@@ -1,5 +1,11 @@
-"""Render the S11/S12 auditor manifests (see render.sh). Output: YAML stream of JSON documents, deterministic."""
+"""Render the S11/S12 auditor manifests (see render.sh). Output: YAML stream of JSON documents, deterministic.
+
+RETIRED 2026-11-16 for bank-a and bank-b (APS conformance design 8): BI is the only auditor (min_approvals = 1). The bank auditors are removed from the cluster at the chain reset;
+their key Secrets and PVC audit-store are kept for retention, never re-rendered. This renderer exits non-zero for them (AUDITOR_LEGACY_RENDER=1 only for the retired renderer's own tests).
+The BI auditor is live and unchanged.
+"""
 import json
+import os
 import re
 import sys
 import tomllib
@@ -7,6 +13,9 @@ import tomllib
 import yaml
 
 party, digest, pub, network = sys.argv[1:5]
+if party in ("bank-a", "bank-b") and os.environ.get("AUDITOR_LEGACY_RENDER") != "1":
+    print(f"render.sh: the {party} auditor is RETIRED 2026-11-16 (BI is the only auditor; its key Secret and PVC audit-store are kept for retention, nothing is rendered)", file=sys.stderr)
+    sys.exit(2)
 pvc = "pvc" in sys.argv[5:]
 gwtls = "gwtls" in sys.argv[5:]
 bankc_ip = next((a.split(":", 1)[1] for a in sys.argv[5:] if a.startswith("bankc:")), "")
@@ -50,8 +59,8 @@ toml = "\n".join(
         f'dfabi = "{dfabi}"',
         "",
         "[lanes]",
-        f"rd = {lanes['ds-rd']}",
-        f"dfabi = {lanes['ds-dfabi']}",
+        f"rd = {lanes['lane-1']}",
+        f"dfabi = {lanes['lane-2']}",
         "",
         "[auditor]",
         f'key_name = "{key_name}"',

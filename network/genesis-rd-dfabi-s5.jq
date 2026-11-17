@@ -1,13 +1,13 @@
 # S5 variant of genesis-rd-dfabi.jq (the old chain keeps genesis-rd-dfabi.jq). Differences: the BI operator account is registered by
 # the localnet template (its client account is mapped to `bi`), so it is not registered again; the governance account `bi-gov` is
 # registered and funded for fees (PLAN S3: CanEnactGovernance is granted to it in the privacy transaction, not to `bi`).
-# RD and DFABI as DataspaceRestricted assets homed in ONE restricted dataspace ($ds, e.g. ds-rd).
+# RD and DFABI as DataspaceRestricted assets homed in ONE restricted dataspace (domain $domain = wonderland.ds-1).
 # One dataspace for both on purpose: a DvpIsi whose legs sit in two different restricted dataspaces
 # cannot execute (core isi/settlement.rs dvp_rejects_counterparty_consent_outside_execution_dataspace:
 # "committed public balance scope .. does not match execution dataspace .."), so the DvP pair shares a home.
 # A restricted definition needs an explicit owning domain (isi/domain.rs ensure_asset_definition_domain_context);
 # execution takes the home dataspace from that domain's dataspace segment, the router from the alias first.
-# Both are "wonderland.$ds" / "<name>#wonderland.$ds" here, so they agree.
+# Both are "$domain" / "<name>#$domain" here, so they agree.
 def adef($id; $name; $desc): {Register:{AssetDefinition:{alias:null,balance_scope_policy:"DataspaceRestricted",description:$desc,id:$id,logo:null,metadata:{},mintable:"Infinitely",name:$name,owning_domain:$domain,spec:{scale:0}}}};
 def acct($id): {Register:{Account:{id:$id,label:null,metadata:{},opaque_ids:[],uaid:null}}};
 def xor($id): {Mint:{Asset:{destination:("6TEAJqbb8oEPmLncoNiMRbLEK6tw#" + $id),object:"1000"}}};
@@ -24,11 +24,16 @@ def readrole($acct; $label; $d): {Register:{Role:{grant_to:$acct,id:("restricted
   # 1. universal: party accounts, their fee balances (XOR is a Global asset), and the read rights of every
   #    restricted dataspace: a signed query fans out to every route and 403s unless all of them are readable.
   #    Party C gets none: it is the outsider. Two transactions at most: a normalized genesis may hold 16.
+#    The neutral sponsor (APS conformance design 4.4) is registered and funded with XOR for fees like a party, but it is no party:
+#    its own key (public/sponsor.pub), no other permission. CanReadRestrictedDataspace on the restricted dataspaces is written only
+#    when $sponsor_read is true (genesis-only permission, executor.rs INITIAL_GENESIS_ONLY_PERMISSION_NAMES; gate G2 decides).
   {instructions: [
-    acct($gov), acct($a), acct($b), acct($c),
-    xor($gov), xor($a), xor($b), xor($c),
+    acct($gov), acct($a), acct($b), acct($c), acct($sponsor),
+    xor($gov), xor($a), xor($b), xor($c), xor($sponsor),
     ($readds[] | . as $d | $readers[] | readperm(.a; $d)),
-    ($readds[] | . as $d | $readers[] | readrole(.a; .l; $d))
+    ($readds[] | . as $d | $readers[] | readrole(.a; .l; $d)),
+    ($readds[] | . as $d | select($sponsor_read) | readperm($sponsor; $d)),
+    ($readds[] | . as $d | select($sponsor_read) | readrole($sponsor; "sponsor"; $d))
   ], ivm_triggers: [], topology: []},
   # 2. home dataspace: domain, both definitions, aliases, BI ownership + mint right
   {instructions: [

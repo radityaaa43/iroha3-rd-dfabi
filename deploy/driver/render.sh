@@ -21,6 +21,8 @@
 # disk; deploy/aps-run pattern) and the Deployment is Recreate (RWO volume). `[aps]` in rd-dfabi.toml: BI `coordinator = true`, a bank `coordinator_url` = the BI gateway (bank-c resolves it through [tls.resolve]); driver memory 2Gi/3Gi (prover ~1.1 GiB RSS). The BI driver also
 # gets the native sidecar `gw-tls` (loopback 18101-18104 -> the four gateways, mTLS; deploy/aps-run pattern) and its [torii] points there; that needs the gateway-lb address of bank-c:
 # [aps.peers] (BI + --aps; needs <public-dir>/accounts.json): each party's ACCOUNT public key -> its gateway URL, bi included; bank-c keeps the in-cluster host and gets a [tls.resolve] entry to this ip.
+# BI + --aps ALSO (APS conformance design 4.4): `[aps] max_carrier_bytes` (the peers' [nexus.atomic_private_settlement] value from network/nexus.toml; the upstream default 4194304 when it omits it), `[aps.sponsor] name = "sponsor"
+# dir = "/keys-sponsor"` and Secret `sponsor-keys` (sponsor.seed, sponsor.note, client.toml; created by deploy/driver/keys-secret.sh sponsor; NOT rendered) mounted read-only at /keys-sponsor in the BI driver container ONLY.
 # --remote-gw bank-c=<ipv4> (BI + --aps ONLY; also a /32 in driver-egress, so the sidecar upstream and the NetworkPolicy cannot drift).
 # <public-dir> (network/public or ~/iroha3-new/public) holds chain_id, genesis.expected_hash (names ConfigMap genesis-<hash8>) and
 # peers.json; it must hold no private material. bank-c (cluster 2) renders the same objects: no zone or node pin anywhere.

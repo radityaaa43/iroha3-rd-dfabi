@@ -3,8 +3,10 @@
 # upstream integration_tests/tests/nexus/atomic_private_settlement_localnet.rs @ 071e281e.
 #
 # lane 0 universal  (dataspace 0, public)
-# lane 1 ds-rd      (dataspace 1, restricted)
-# lane 2 ds-dfabi   (dataspace 2, restricted)
+# lane 1 lane-1     (dataspace 1 ds-1, restricted)
+# lane 2 lane-2     (dataspace 2 ds-2, restricted)
+# Names and descriptions are neutral on purpose: nothing in the catalog or routing says which asset a dataspace carries
+# (APS conformance design 4.1; network/check.sh and scripts/test-neutral-genesis.sh assert it).
 # All 4 validators (bi, bank-a, bank-b, bank-c) are active in all 3 lanes; each
 # dataspace has fault_tolerance = 1, so a committee of 3f+1 = 4.
 
@@ -19,14 +21,14 @@ visibility = "public"
 
 [[nexus.lane_catalog]]
 index = 1
-alias = "ds-rd"
-dataspace = "ds-rd"
+alias = "lane-1"
+dataspace = "ds-1"
 visibility = "restricted"
 
 [[nexus.lane_catalog]]
 index = 2
-alias = "ds-dfabi"
-dataspace = "ds-dfabi"
+alias = "lane-2"
+dataspace = "ds-2"
 visibility = "restricted"
 
 # Dataspace 0 is the reserved universal id. Non-universal dataspaces must carry a
@@ -39,17 +41,17 @@ description = "universal dataspace"
 fault_tolerance = 1
 
 [[nexus.dataspace_catalog]]
-alias = "ds-rd"
+alias = "ds-1"
 id = 1
 manifest_hash = "0100000000000000000000000000000000000000000000000000000000000000"
-description = "Rupiah Digital dataspace"
+description = "private settlement dataspace 1"
 fault_tolerance = 1
 
 [[nexus.dataspace_catalog]]
-alias = "ds-dfabi"
+alias = "ds-2"
 id = 2
 manifest_hash = "0200000000000000000000000000000000000000000000000000000000000000"
-description = "DFABI dataspace"
+description = "private settlement dataspace 2"
 fault_tolerance = 1
 
 [nexus.routing_policy]

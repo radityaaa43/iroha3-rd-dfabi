@@ -21,6 +21,8 @@ refuse "a missing public dir" "public dir" "$D" "$T/none" 1000 100
 refuse "a zero reserve" "reserve" "$D" "$P" 0 100
 refuse "a non-numeric reserve" "reserve" "$D" "$P" 10x 100
 refuse "a reserve above u64" "reserve" "$D" "$P" 99999999999999999999999 100
+refuse "an odd RD reserve (split 50/50 over two pools)" "even" "$D" "$P" 1001 100
+refuse "an odd DFABI reserve (split 50/50 over two pools)" "even" "$D" "$P" 1000 101
 mkdir "$T/p3"; cp "$P"/* "$T/p3/"; : > "$T/p3/x.seed"; refuse "a public dir holding a seed" "private material" "$D" "$T/p3" 1000 100
 out=$("$R" "$D" "$P" 1000 100 2>&1) || fail "render failed: $out"
 python3 -I scripts/check-poolinit.py "$D" "$H8" "$CHAIN" 1000 100 <<<"$out" || fails=$((fails + 1))

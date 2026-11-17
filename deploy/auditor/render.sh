@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# RETIRED 2026-11-16 for bank-a and bank-b: BI is the only auditor (APS conformance design 8). The renderer exits 2 for them; only the BI auditor renders. Their key Secrets and PVC audit-store are kept for retention.
 # Print the S11/S12 auditor manifests of one party (iroha3 PLAN S11 BI auditor, S12 orgs A and B; ANALYST 2-of-3, condition (a): each
 # auditor key is generated and held ONLY in its own org namespace). Writes nothing, calls no cluster, renders NO Secret: the org creates
 # Secret `<key-name>-key` (bi: bi-auditor-key; bank-a: bank-a-auditor-key; bank-b: bank-b-auditor-key; keys <name>.seed and <name>.hybrid)

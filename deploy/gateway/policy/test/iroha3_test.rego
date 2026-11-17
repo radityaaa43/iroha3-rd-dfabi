@@ -174,6 +174,11 @@ rows := [
 		"deny": [{"roles": ["lensa", "bank-a", "bank-b", "bank-c"], "nodes": nodes}],
 	},
 	{
+		"row": 20, "method": "POST", "paths": ["/aps/capacity"],
+		"allow": [{"roles": ["bi"], "nodes": nodes}],
+		"deny": [{"roles": ["lensa", "bank-a", "bank-b", "bank-c"], "nodes": nodes}],
+	},
+	{
 		"row": 18, "method": "POST", "paths": ["/aps/submit"],
 		"allow": [{"roles": banks, "nodes": ["bi"]}],
 		"deny": [{"roles": banks, "nodes": ["bank-a", "bank-b", "bank-c"]}],
@@ -233,6 +238,25 @@ test_aps_party_routes_are_not_lensa_or_bank if {
 			not allowed(n, role, "POST", "/aps/leg")
 			not allowed(n, role, "POST", "/aps/intent")
 			not allowed(n, role, "GET", "/aps/wallet")
+		}
+	}
+}
+
+# Row 20: only the BI coordinator driver (leaf CN `bi`) asks a party driver for its capacity, at every node; exact method and path, no query.
+test_aps_capacity_is_bi_only_and_exact if {
+	every n in nodes {
+		allowed(n, "bi", "POST", "/aps/capacity")
+		every r in all_roles {
+			not allowed(n, r, "GET", "/aps/capacity")
+			not allowed(n, r, "PUT", "/aps/capacity")
+			not allowed(n, r, "POST", "/aps/capacity?x=1")
+			not allowed(n, r, "POST", "/aps/capacity/")
+			not allowed(n, r, "POST", "/aps/capacity/x")
+			not allowed(n, r, "POST", "/x/aps/capacity")
+			not allowed(n, r, "POST", "/aps/capacity\n")
+		}
+		every r in ["lensa", "bank-a", "bank-b", "bank-c"] {
+			not allowed(n, r, "POST", "/aps/capacity")
 		}
 	}
 }

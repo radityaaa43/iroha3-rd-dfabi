@@ -47,8 +47,8 @@ toml = "\n".join(
         f'dfabi = "{dfabi}"',
         "",
         "[lanes]",
-        f"rd = {lanes['ds-rd']}",
-        f"dfabi = {lanes['ds-dfabi']}",
+        f"rd = {lanes['lane-1']}",
+        f"dfabi = {lanes['lane-2']}",
         "",
         "# BI is the only auditor (user 2026-11-13, R1): reached ONLY through the BI gateway over mutual TLS (S13 transport A)",
         "[audit]",
@@ -75,7 +75,8 @@ script = " && ".join(
         "install -m 600 /gov/bi-gov.seed /work/bi-gov.seed",
         f"rd-dfabi keys client-toml /work bi-gov --torii {bi_torii} --chain {chain} --network-id-file /genesis/genesis.expected_hash",
         "rm -f /work/bi-gov.seed",
-        f"rd-dfabi pool-init /config/rd-dfabi.toml --rd-reserve {rd_reserve} --dfabi-reserve {dfabi_reserve}",
+        # one pool per (dataspace, asset): each asset's reserve split 50/50 over lane 1 and lane 2 (render.sh checked both are even)
+        f"rd-dfabi pool-init /config/rd-dfabi.toml --lane 1 --rd {int(rd_reserve) // 2} --dfabi {int(dfabi_reserve) // 2} --lane 2 --rd {int(rd_reserve) // 2} --dfabi {int(dfabi_reserve) // 2}",
         # public pool records (ids, route, policy, governance, origin commitments; no note, no key) for the banks' aps-pools ConfigMap
         "printf 'pools_public_json=%s\\n' \"$(tr -d '\\n ' < /pools/pools.json)\"",
     ]

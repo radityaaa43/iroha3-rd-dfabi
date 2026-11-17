@@ -1,11 +1,19 @@
-"""Render one aps-run Job (see render.sh). Output: YAML stream of JSON documents, deterministic."""
+"""Render one aps-run Job (see render.sh). Output: YAML stream of JSON documents, deterministic.
+
+RETIRED 2026-11-16 (APS conformance design 8): the aps-run Job (a pool per trade, min_approvals = 2) is removed from the cluster at the chain reset; the live path is the BI
+coordinator driver (deploy/driver/render.sh --aps) over the four shared pools (deploy/pool-init). Kept as the record of how the old path was rendered; do not run it on the new chain (exits 2 unless APSRUN_LEGACY_RENDER=1, its own tests).
+"""
 import json
+import os
 import re
 import sys
 import tomllib
 
 import yaml
 
+if os.environ.get("APSRUN_LEGACY_RENDER") != "1":
+    print("render.py: the aps-run Job is retired 2026-11-16 (BI coordinator driver: deploy/driver/render.sh --aps; nothing is rendered). APSRUN_LEGACY_RENDER=1 only for the retired renderer's own tests.", file=sys.stderr)
+    sys.exit(2)
 digest, pub, network, name, bankc_ip, *args = sys.argv[1:]
 PARTIES = ["bi", "bank-a", "bank-b", "bank-c"]
 ENVOY = "envoyproxy/envoy@sha256:b1f389c3a6148e85e9de364cb867aa2e5802153abb37ad80f1f2241d693da32a"  # the gateways' pinned envoy
@@ -41,8 +49,8 @@ toml = "\n".join([
     'dfabi = "4mBWK1JCwQdHLDPpuVKc56eLsXka"',
     "",
     "[lanes]",
-    f"rd = {lanes['ds-rd']}",
-    f"dfabi = {lanes['ds-dfabi']}",
+    f"rd = {lanes['lane-1']}",
+    f"dfabi = {lanes['lane-2']}",
     "",
     "[audit]",
     "min_approvals = 2",

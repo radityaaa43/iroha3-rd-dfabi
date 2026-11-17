@@ -22,7 +22,7 @@ ns_render() { # <party> -> every render of that namespace (no probe)
   echo "---"; deploy/p2p/render.sh "${c2[@]}" --acl-id acl-test --external-cidr 198.51.100.7/32 "$p"
   echo "---"; deploy/driver/render.sh "$p" "$D" "$P" --audit-tls "${gwr[@]}"
   echo "---"; deploy/gateway/render.sh "$p" --envoy-image "$EI" --opa-image "$OI" "${gw2[@]}"
-  if [[ $p != bank-c ]]; then echo "---"; deploy/auditor/render.sh "$p" "$D" "$P"; fi
+  if [[ $p == bi ]]; then echo "---"; deploy/auditor/render.sh "$p" "$D" "$P"; fi  # the bank-a/bank-b auditors are retired (2026-11-16)
   if [[ $p == bi ]]; then echo "---"; deploy/pool-init/render.sh "$D" "$P" 1000 100; fi
 }
 probe_docs() { # <party> <peer|gateway|lb> -> the probe's own documents as YAML

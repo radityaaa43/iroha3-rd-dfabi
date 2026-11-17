@@ -115,7 +115,9 @@ done
 # Only in aps mode (generated peer.toml carries [[nexus.lane_catalog]]); a non-aps network has no lanes.
 NEXUS="${NEXUS:-nexus.toml}"
 if grep -qs '^\[\[nexus\.lane_catalog\]\]' "$OUT"/*/peer.toml; then
-check "$NEXUS: 3 lanes, dataspace ids 0,1,2 (universal public, ds-rd + ds-dfabi restricted)" \
+# the sponsor's account id (I105), the same PARTY_ACCOUNTS json that generate.sh --aps took
+SPONSOR_ID=$(jq -er '.sponsor' "${PARTY_ACCOUNTS:-/dev/null}" 2>/dev/null) || { SPONSOR_ID=""; fail "PARTY_ACCOUNTS=<json with the sponsor account id> is needed for the sponsor rows"; }
+check "$NEXUS: 3 lanes, dataspace ids 0,1,2 (universal public, ds-1 + ds-2 restricted, neutral names)" \
   python3 -I -c '
 import sys, tomllib
 n = tomllib.load(open(sys.argv[1], "rb"))["nexus"]
@@ -123,9 +125,12 @@ lanes, dss = n["lane_catalog"], n["dataspace_catalog"]
 assert n["lane_count"] == len(lanes) == len(dss) == 3
 assert [l["index"] for l in lanes] == [0, 1, 2]
 assert [d["id"] for d in dss] == [0, 1, 2]
-assert [d["alias"] for d in dss] == ["universal", "ds-rd", "ds-dfabi"]
+assert [d["alias"] for d in dss] == ["universal", "ds-1", "ds-2"]
+assert [l["alias"] for l in lanes] == ["universal", "lane-1", "lane-2"]
 assert [l["dataspace"] for l in lanes] == [d["alias"] for d in dss]
 assert [l["visibility"] for l in lanes] == ["public", "restricted", "restricted"]
+import re
+assert not re.search(r"rd|dfabi|rupiah", repr([lanes, dss, n["routing_policy"]]), re.I), "asset word in the public catalog, routing or descriptions"
 ' "$NEXUS"
 # irohad InitKura refuses a custom lane catalog unless the signed genesis is NPoS
 # (crates/irohad/src/main.rs, "custom Nexus lane topology requires ... to be NPoS").
@@ -134,34 +139,8 @@ check "$OUT/genesis/genesis.json: consensus_mode is Npos (required by a custom l
   jq -e '.consensus_mode == "Npos"' "$OUT/genesis/genesis.json"
 # RD and DFABI are DataspaceRestricted, share one restricted home dataspace (domain wonderland.<ds>, alias <name>#wonderland.<ds>)
 # and only BI, A and B (3 of the 4 party accounts) may read the restricted dataspaces: C, the outsider, gets 403 from Torii.
-check "genesis.json: RD+DFABI DataspaceRestricted in one restricted dataspace; BI/A/B read every restricted dataspace, C none" \
-  python3 -I -c '
-import json, sys, tomllib
-g = json.load(open(sys.argv[1]))
-n = tomllib.load(open(sys.argv[2], "rb"))["nexus"]
-ids = {d["alias"]: d["id"] for d in n["dataspace_catalog"]}
-lanes = {l["dataspace"]: l["visibility"] for l in n["lane_catalog"]}
-restricted = sorted(ids[a] for a, v in lanes.items() if v == "restricted")
-ins = [i for t in g["transactions"] for i in t["instructions"] if isinstance(i, dict)]
-defs = {d["name"]: d for i in ins if "Register" in i and "AssetDefinition" in i["Register"] for d in [i["Register"]["AssetDefinition"]] if d["name"] in ("RD", "DFABI")}
-assert set(defs) == {"RD", "DFABI"}, defs.keys()
-homes = {d["owning_domain"].split(".")[-1] for d in defs.values()}
-assert len(homes) == 1 and lanes[homes.copy().pop()] == "restricted", homes
-assert all(d["balance_scope_policy"] == "DataspaceRestricted" for d in defs.values())
-home = homes.pop()
-assert sum(1 for i in ins if "Register" in i and "Domain" in i["Register"] and i["Register"]["Domain"]["id"] == "wonderland." + home) == 1
-aliases = {i["SetAssetDefinitionAlias"]["asset_definition_id"]: i["SetAssetDefinitionAlias"]["alias"] for i in ins if "SetAssetDefinitionAlias" in i}
-for name, d in defs.items():
-    assert aliases.get(d["id"]) == name.lower() + "#wonderland." + home, (name, aliases.get(d["id"]))
-fee = n["fees"]["fee_asset_id"]
-parties = {i["Mint"]["Asset"]["destination"].split("#")[1] for i in ins if "Mint" in i and i["Mint"]["Asset"]["destination"].startswith(fee + "#") and i["Mint"]["Asset"]["object"] == "1000"}
-assert len(parties) == 4, parties
-grants = [i["Grant"]["Permission"] for i in ins if "Grant" in i and i["Grant"]["Permission"]["object"]["name"] == "CanReadRestrictedDataspace"]
-readers = {}
-for p in grants: readers.setdefault(p["destination"], []).append(p["object"]["payload"]["dataspace"])
-assert len(readers) == 3 and set(readers) < parties, readers.keys()
-assert all(sorted(v) == restricted for v in readers.values()), readers.values()
-' "$OUT/genesis/genesis.json" "$NEXUS"
+check "genesis.json: RD+DFABI DataspaceRestricted in one restricted dataspace; BI/A/B read every restricted dataspace, C none; sponsor funded, reads restricted dataspaces only if SPONSOR_READ=1; no pool activation" \
+  python3 -I check-genesis.py "$OUT/genesis/genesis.json" "$NEXUS" "$SPONSOR_ID" "${SPONSOR_READ:-0}"
 # A genesis gas-accepted-assets parameter without node-config accepted_assets makes Torii quote
 # a Nexus fee only while execution also requires a PipelineGas limit: every tx is Rejected.
 check "genesis.json has no ivm_gas_accepted_assets unless peer.toml [pipeline.gas] sets accepted_assets" \

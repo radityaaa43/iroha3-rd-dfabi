@@ -18,7 +18,7 @@ for q in bi bank-a bank-b bank-c; do
   cp "$P/gateway-ca/$q-server-ca.pem" "$T/server-cas/"
 done
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$T/client/tls.key" -out "$T/client/tls.crt" -days 1 -subj "/CN=bank-a-auditor" 2>/dev/null
-deploy/auditor/render.sh bank-a "$D" "$P" --keys-in-pvc --gw-tls --bank-c-gw-cidr 203.0.113.44/32 > "$T/out.yaml"
+AUDITOR_LEGACY_RENDER=1 deploy/auditor/render.sh bank-a "$D" "$P" --keys-in-pvc --gw-tls --bank-c-gw-cidr 203.0.113.44/32 > "$T/out.yaml"
 python3 -I - "$T" <<'PY'
 import sys, yaml
 t = sys.argv[1]

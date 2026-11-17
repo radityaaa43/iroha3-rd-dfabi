@@ -43,6 +43,12 @@ for p in bi bank-a bank-b bank-c; do
   [[ $log == *"FILE $p.seed 64"* && $log == *"FILE $p.note 128"* && $log == *"FILE client.toml "* ]] && ok "$p: keys $p.seed, $p.note, client.toml" || fail "$p: key names: $log"
   [[ $(grep -c '^kubectl' <<<"$log") -eq 1 && $log != *apply* && $log != *replace* && $log != *dry-run* ]] && ok "$p: one plain create call" || fail "$p: verbs: $log"
 done
+# the neutral sponsor: Secret sponsor-keys lives in the BI namespace (the BI coordinator driver is its only reader)
+: > "$STUB_LOG"; mk "$T/c-sponsor" sponsor
+out=$("$S" sponsor "$T/c-sponsor" 2>&1); rc=$?
+log=$(cat "$STUB_LOG")
+[[ $rc -eq 0 && $log == *"create secret generic sponsor-keys -n rd-iroha3-bi "* && $log == *"FILE sponsor.seed 64"* && $log == *"FILE sponsor.note 128"* && $log == *"FILE client.toml "* ]] \
+  && ok "sponsor: Secret sponsor-keys in rd-iroha3-bi with sponsor.seed, sponsor.note, client.toml" || fail "sponsor: rc=$rc $out $log"
 : > "$STUB_LOG"; out=$(STUB_EXISTS=1 "$S" bi "$T/c-bi" 2>&1); rc=$?
 [[ $rc -ne 0 && $out == *AlreadyExists* ]] && ok "re-run fails with AlreadyExists (safe, never overwrites)" || fail "re-run: rc=$rc $out"
 [[ $(grep -c '^kubectl' "$STUB_LOG") -eq 1 && $(cat "$STUB_LOG") != *apply* && $(cat "$STUB_LOG") != *replace* ]] && ok "re-run does not fall back to apply/replace" || fail "re-run log: $(cat "$STUB_LOG")"

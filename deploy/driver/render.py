@@ -30,6 +30,11 @@ dfabi = re.search(r"^  DFABI_ID=(\S+)$", gen, re.M).group(1)
 nexus = tomllib.load(open(f"{network}/nexus.toml", "rb"))["nexus"]
 fee = nexus["fees"]["fee_asset_id"]
 lanes = {l["alias"]: l["index"] for l in nexus["lane_catalog"]}
+# [aps] max_carrier_bytes of the BI coordinator = the peers' governed value ([nexus.atomic_private_settlement], network/nexus.toml is the overlay every peer.toml gets). The overlay omits it, so the
+# upstream default applies (iroha_config parameters/defaults.rs nexus::atomic_private_settlement::MAX_CARRIER_BYTES = 4 MiB, actual.rs:2702; commit 071e281e): one source, never a driver-side constant.
+carrier = nexus.get("atomic_private_settlement", {}).get("max_carrier_bytes", 4 * 1024 * 1024)
+if not isinstance(carrier, int) or isinstance(carrier, bool) or not 0 < carrier < 2**63:
+    sys.exit("render.sh: nexus.toml [nexus.atomic_private_settlement] max_carrier_bytes must be a positive integer below 2^63")
 # --- APS all-flows (plan 2026-11-13-04). ConfigMap aps-pools = the PUBLIC pool records the operator gives (node-build driver/src/pools.rs PoolFile/PoolRecord, loaded by PoolFile::load):
 # nothing is invented here; the shape is checked so a stray field (a key, a note) can never ride along.
 POOL_FIELDS = {"pool_id", "route", "policy", "governance", "origin", "bundles"}
@@ -79,13 +84,15 @@ toml = "\n".join(
         f'dfabi = "{dfabi}"',
         "",
         "[lanes]",
-        f"rd = {lanes['ds-rd']}",
-        f"dfabi = {lanes['ds-dfabi']}",
+        f"rd = {lanes['lane-1']}",
+        f"dfabi = {lanes['lane-2']}",
         "",
         *(["# APS coordinator = the BI driver only; a bank forwards POST /aps/submit to the BI gateway over mTLS (bank-c resolves the host through [tls.resolve])",
-           "[aps]", *(["coordinator = true", "",
+           "[aps]", *(["coordinator = true", f"max_carrier_bytes = {carrier}  # copied from the peer config [nexus.atomic_private_settlement] (upstream default when the overlay omits it)", "",
                        "# [aps.peers] (node-build T2): each party's ACCOUNT public key (accounts.json) -> its gateway URL, bi included; bank-c keeps the in-cluster host (SNI/SAN), pinned to its gateway-lb ip by [tls.resolve]",
-                       "[aps.peers]", *[f'"{aps_accounts[q]}" = "https://gateway.rd-iroha3-{q}.svc.cluster.local:8443"' for q in PARTIES]] if aps_coordinator else ['coordinator_url = "https://gateway.rd-iroha3-bi.svc.cluster.local:8443"']), ""] if aps else []),
+                       "[aps.peers]", *[f'"{aps_accounts[q]}" = "https://gateway.rd-iroha3-{q}.svc.cluster.local:8443"' for q in PARTIES], "",
+                       "# the neutral sponsor (APS conformance design 4.4): its own keys (Secret sponsor-keys, this driver only) sign the upload, availability, votes, phase certificates and carriers",
+                       "[aps.sponsor]", 'name = "sponsor"', 'dir = "/keys-sponsor"'] if aps_coordinator else ['coordinator_url = "https://gateway.rd-iroha3-bi.svc.cluster.local:8443"']), ""] if aps else []),
         *(["# K6: per-request mint caps (cfg.auditor.max_rd / max_dfabi); the table needs all of listen, store_dir, max_rd, max_dfabi, parties (node-build config.rs:96-118); listen/store_dir are unused by the server mode",
            "[auditor]", 'listen = "0.0.0.0:8090"', 'store_dir = "/audit-store"', f"max_rd = {mint.split(':')[0]}", f"max_dfabi = {mint.split(':')[1]}",
            "parties = [" + ", ".join(json.dumps(json.loads(read('accounts.json'))[q]) for q in PARTIES) + "]", ""] if mint else []),
@@ -141,6 +148,7 @@ def sidecar():
     return {"static_resources": {"listeners": listeners, "clusters": clusters}}
 
 
+SPONSOR_FILES = ("sponsor.seed", "sponsor.note", "client.toml")  # Secret sponsor-keys (deploy/driver/keys-secret.sh sponsor)
 sec = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}}
 image = f"ghcr.io/radityaaa43/iroha3-rd-driver@{digest}"
 docs = [
@@ -202,7 +210,9 @@ docs = [
                      {"name": "genesis", "mountPath": "/genesis", "readOnly": True},
                  ] + ([{"name": "client-cert", "mountPath": "/tls/client", "readOnly": True},
                        {"name": "server-cas", "mountPath": "/tls/cas", "readOnly": True}] if audit_tls else [])
-                 + ([{"name": "pools", "mountPath": "/pools"}, {"name": "tmp", "mountPath": "/tmp"}] if aps else []),
+                 + ([{"name": "pools", "mountPath": "/pools"}, {"name": "tmp", "mountPath": "/tmp"}] if aps else [])
+                 # BI coordinator only: the sponsor's three files as read-only subPath mounts (a Secret volume file is a symlink, and iroha_config_base refuses a symlinked client.toml, as for /client/client.toml)
+                 + ([{"name": "sponsor-keys", "mountPath": f"/keys-sponsor/{k}", "subPath": k, "readOnly": True} for k in SPONSOR_FILES] if aps_coordinator else []),
              }],
              "volumes": [
                  {"name": "keys", "secret": {"secretName": f"{party}-keys", "defaultMode": 0o400,
@@ -214,6 +224,7 @@ docs = [
              ] + ([{"name": "client-cert", "secret": {"secretName": "iroha3-client-cert", "defaultMode": 0o400,
                                                       "items": [{"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"}]}},
                    {"name": "server-cas", "configMap": {"name": "gateway-server-cas"}}] if audit_tls else [])
+             + ([{"name": "sponsor-keys", "secret": {"secretName": "sponsor-keys", "defaultMode": 0o400, "items": [{"key": k, "path": k} for k in SPONSOR_FILES]}}] if aps_coordinator else [])
              + (([{"name": "pools", "persistentVolumeClaim": {"claimName": "pools-v2"}}, {"name": "tmp", "emptyDir": {}}, {"name": "envoy-config", "configMap": {"name": "driver-gw-envoy"}}] if aps_coordinator
                  else [{"name": "aps-pools", "configMap": {"name": "aps-pools"}}, {"name": "pools", "emptyDir": {}}, {"name": "tmp", "emptyDir": {}}]) if aps else []),
          }},

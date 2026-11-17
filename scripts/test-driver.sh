@@ -207,6 +207,25 @@ apsmut "the BI gw-tls listener on 0.0.0.0" bi "$GWE"'e["static_resources"]["list
 apsmut "the BI gw-tls bank-c upstream not the --remote-gw address" bi "$GWE"'gwe["data"]["envoy.yaml"] = gwe["data"]["envoy.yaml"].replace("203.0.113.30", "203.0.113.99")'
 apsmut "the BI driver-egress without the bank-c /32" bi 'e = next(d for d in docs if d["metadata"]["name"] == "driver-egress"); e["spec"]["egress"][2]["to"].pop()'
 apsmut "the BI driver-egress with an extra ipBlock" bi 'e = next(d for d in docs if d["metadata"]["name"] == "driver-egress"); e["spec"]["egress"][2]["to"].append({"ipBlock": {"cidr": "8.8.8.8/32"}})'
+# the neutral sponsor (design 4.4): Secret sponsor-keys read-only at /keys-sponsor in the BI coordinator driver ONLY; [aps.sponsor]; [aps] max_carrier_bytes from the peer config
+SPV='v = next(v for v in ps["volumes"] if v["name"] == "sponsor-keys"); '
+apsmut "the BI sponsor-keys volume dropped" bi "$DEP"'ps["volumes"] = [v for v in ps["volumes"] if v["name"] != "sponsor-keys"]'
+apsmut "the BI sponsor mounts dropped" bi "$DEP"'ps["containers"][0]["volumeMounts"] = [m for m in ps["containers"][0]["volumeMounts"] if m["name"] != "sponsor-keys"]'
+apsmut "a BI sponsor mount that is not read-only" bi "$DEP"'next(m for m in ps["containers"][0]["volumeMounts"] if m["mountPath"] == "/keys-sponsor/sponsor.seed")["readOnly"] = False'
+apsmut "the BI sponsor-keys volume mode 0644" bi "$DEP$SPV"'v["secret"]["defaultMode"] = 0o644'
+apsmut "the BI sponsor-keys volume carrying an extra key" bi "$DEP$SPV"'v["secret"]["items"].append({"key": "bi.seed", "path": "bi.seed"})'
+apsmut "the sponsor-keys Secret read by an init container" bi "$DEP"'ps["initContainers"][0]["volumeMounts"].append({"name": "sponsor-keys", "mountPath": "/keys-sponsor", "readOnly": True})'
+apsmut "[aps.sponsor] dropped" bi "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("[aps.sponsor]", "[aps.sponsor_x]")'
+apsmut "[aps.sponsor] dir elsewhere" bi "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("/keys-sponsor", "/keys")'
+apsmut "[aps] max_carrier_bytes not the peer config value" bi "$CFG"'cfg["data"]["rd-dfabi.toml"] = cfg["data"]["rd-dfabi.toml"].replace("max_carrier_bytes = 4194304", "max_carrier_bytes = 1048576")'
+apsmut "the sponsor keys mounted into a bank driver" bank-a "$DEP"'ps["volumes"].append({"name": "sponsor-keys", "secret": {"secretName": "sponsor-keys", "defaultMode": 0o400}}); ps["containers"][0]["volumeMounts"].append({"name": "sponsor-keys", "mountPath": "/keys-sponsor", "readOnly": True})'
+! grep -Eq 'sponsor-keys|keys-sponsor|aps\.sponsor' <<<"$("$R" bank-a "$D" "$P" --audit-tls "${APS[@]}")" && ok "a bank driver render names no sponsor at all" || fail "a bank driver render mentions the sponsor"
+! grep -Eq 'sponsor-keys|keys-sponsor|aps\.sponsor' <<<"$("$R" bi "$D" "$P" --audit-tls)" && ok "the BI driver without --aps names no sponsor at all" || fail "the BI driver without --aps mentions the sponsor"
+# max_carrier_bytes is the peers' [nexus.atomic_private_settlement] value when the overlay sets it (upstream default 4194304 otherwise: the repo's nexus.toml omits it)
+mkdir "$T/net"; cp network/generate.sh "$T/net/"
+python3 -I -c 'import sys; s = open("network/nexus.toml").read(); a = "[nexus.atomic_private_settlement]\n"; assert a in s; open(sys.argv[1], "w").write(s.replace(a, a + "max_carrier_bytes = 1048576\n"))' "$T/net/nexus.toml"
+python3 -I deploy/driver/render.py bi "$D" "$P" "$T/net" --audit-tls "" 1 "" bank-c=$BCGW 2>&1 | python3 -I scripts/check-driver.py bi "$D" "$H8" "$CHAIN" tls "gw:bank-c=$BCGW" aps:pvc carrier:1048576 >/dev/null 2>&1 \
+  && ok "max_carrier_bytes is copied from the peer config overlay (1048576)" || fail "max_carrier_bytes is not copied from the peer config"
 apsmut "a gw-tls sidecar on a bank driver" bank-a "$DEP"'ps["initContainers"].append({"name": "gw-tls", "image": "x", "restartPolicy": "Always"})'
 apsmut "a bank aps-pools carrying a bundle index (bundles not forced to [])" bank-a 'a = next(d for d in docs if d["metadata"]["name"] == "aps-pools"); p = json.loads(a["data"]["pools.json"]); p["rd"]["bundles"] = [{"id": "ab", "height": 7}]; a["data"]["pools.json"] = json.dumps(p)'
 apsmut "the BI pools volume an emptyDir instead of the PVC pools-v2" bi "$DEP"'v = next(v for v in ps["volumes"] if v["name"] == "pools"); v.pop("persistentVolumeClaim"); v["emptyDir"] = {}'
