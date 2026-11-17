@@ -184,6 +184,14 @@ rows := [
 		"deny": [{"roles": banks, "nodes": ["bank-a", "bank-b", "bank-c"]}],
 	},
 	{
+		"row": 21, "method": "GET", "paths": [concat("", ["/records/", hex]), concat("", ["/records/", upper(hex)])],
+		"allow": [{"roles": ["lensa"], "nodes": ["bi"]}],
+		"deny": [
+			{"roles": ["lensa"], "nodes": ["bank-a", "bank-b", "bank-c"]},
+			{"roles": ["bank-a", "bank-b", "bank-c", "bi"], "nodes": nodes},
+		],
+	},
+	{
 		"row": 19, "method": "GET", "paths": ["/aps/bundles"],
 		"allow": [{"roles": banks, "nodes": ["bi"]}],
 		"deny": [
@@ -195,6 +203,24 @@ rows := [
 
 # Row 15: the three auditor nodes (bank-c runs no auditor).
 auditor_nodes := ["bi", "bank-a", "bank-b"]
+
+# Row 21 is exact: another method, a 63/65-char or non-hex id, a query, a trailing slash or the list never passes for lensa at BI.
+test_records_lensa_is_exact if {
+	h := hex
+	allowed("bi", "lensa", "GET", concat("", ["/records/", h]))
+	not allowed("bi", "lensa", "GET", "/records")
+	not allowed("bi", "lensa", "GET", "/records/")
+	not allowed("bi", "lensa", "GET", concat("", ["/records/", substring(h, 0, 63)]))
+	not allowed("bi", "lensa", "GET", concat("", ["/records/", h, "0"]))
+	not allowed("bi", "lensa", "GET", concat("", ["/records/g", substring(h, 1, 63)]))
+	not allowed("bi", "lensa", "GET", concat("", ["/records/", h, "?x=1"]))
+	not allowed("bi", "lensa", "GET", concat("", ["/records/", h, "/"]))
+	not allowed("bi", "lensa", "GET", concat("", ["/records/", h, "/x"]))
+	not allowed("bi", "lensa", "GET", concat("", ["/records/../", h]))
+	every m in ["POST", "PUT", "DELETE", "PATCH"] {
+		not allowed("bi", "lensa", m, concat("", ["/records/", h]))
+	}
+}
 
 # Rows 16-18 are exact: another method, a query, a trailing slash, a sub-path or an unknown /aps/ route never passes for any role at any node.
 test_aps_routes_are_exact if {
@@ -288,7 +314,7 @@ test_aps_bank_submit_only_at_bi if {
 	}
 }
 
-# Row 15 is exact: other methods, a query, a sub-path or BI's /records never pass for any role at any node.
+# Row 15 is exact: other methods, a query, a sub-path or the /records list never pass for any role at any node.
 test_auditor_routes_are_exact if {
 	every n in nodes {
 		every r in all_roles {

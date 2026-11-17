@@ -157,7 +157,7 @@ route("lensa") if {
 
 # Row 15 (S11 transport A; dfabi auditor_urls): every party's driver identity (its [tls] client leaf, CN = role: pool-init, the APS
 # coordinator) reads /keys and asks /approve of the auditor behind this gateway; Lensa only reads the public /keys. bank-c runs no
-# auditor, so nothing passes there; BI's /records stays closed.
+# auditor, so nothing passes there; the full /records list stays closed to every role (the one /records/<id> read is row 21).
 auditor_nodes := {"bi", "bank-a", "bank-b"}
 
 route(role) if {
@@ -214,4 +214,12 @@ route(role) if {
 	own == "bi"
 	method == "GET"
 	path == "/aps/bundles"
+}
+
+# Row 21 (Lensa BI view): the keyless public Lensa reads BI's auditor record of one bundle, at BI's own gateway only: exact `GET /records/<64 hex>`,
+# no query, no list (`/records` stays closed), no other party's auditor, no other role.
+route("lensa") if {
+	own == "bi"
+	method == "GET"
+	regex.match(`^/records/[0-9a-fA-F]{64}$`, path)
 }
