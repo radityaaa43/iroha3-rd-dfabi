@@ -21,6 +21,9 @@ aliases = {i["SetAssetDefinitionAlias"]["asset_definition_id"]: i["SetAssetDefin
 for name, d in defs.items():
     assert aliases.get(d["id"]) == name.lower() + "#wonderland." + home, (name, aliases.get(d["id"]))
 fee = n["fees"]["fee_asset_id"]
+# every account holding the fee asset; in the S5 genesis (assemble-s5.sh) bi replaces the localnet client and is funded by the template's
+# own fee mints, while the 1000-XOR mints go to bi-gov, A, B, C and the sponsor (generate.sh: the 4 parties and the sponsor)
+funded = {i["Mint"]["Asset"]["destination"].split("#")[1] for i in ins if "Mint" in i and i["Mint"]["Asset"]["destination"].startswith(fee + "#")}
 parties = {i["Mint"]["Asset"]["destination"].split("#")[1] for i in ins if "Mint" in i and i["Mint"]["Asset"]["destination"].startswith(fee + "#") and i["Mint"]["Asset"]["object"] == "1000"}
 # the neutral sponsor is funded the same way (fees for every carrier) but is no party: registered once
 assert sponsor in parties and len(parties) == 5, parties
@@ -45,5 +48,5 @@ assert not [x for x in names(ins) if "ActivatePrivateSettlementPoolV1" in x], "g
 grants = [i["Grant"]["Permission"] for i in ins if "Grant" in i and i["Grant"]["Permission"]["object"]["name"] == "CanReadRestrictedDataspace" and i["Grant"]["Permission"]["destination"] != sponsor]
 readers = {}
 for p in grants: readers.setdefault(p["destination"], []).append(p["object"]["payload"]["dataspace"])
-assert len(readers) == 3 and set(readers) < parties, readers.keys()
+assert len(readers) == 3 and set(readers) <= funded - {sponsor}, readers.keys()
 assert all(sorted(v) == restricted for v in readers.values()), readers.values()
