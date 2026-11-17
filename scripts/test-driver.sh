@@ -166,6 +166,29 @@ for spec in 'a pools file with an extra secret field|.rd.seed = "x"' 'a pools fi
   err=$("$R" bank-a "$D" "$P" --audit-tls --aps --aps-pools "$T/bad.json" 2>&1 >/dev/null); rc=$?
   [[ $rc -eq 2 && $err == *"Pool"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused as expected (rc=$rc: $err)"
 done
+# v2 pool index (node-build driver/src/pools.rs PoolFile::save: {version: 2, pools: [{lane, asset, ...record}, up to 4], carriers}); the legacy {rd, dfabi} file above stays accepted
+PL2="$T/pools-v2.json"
+jq -n --arg o1 "$(printf 'ab%.0s' $(seq 1 32))" --arg o2 "$(printf 'cd%.0s' $(seq 1 32))" \
+  '{version: 2, pools: [[1, "rd", "7e"], [1, "dfabi", "e6"], [2, "rd", "5a"], [2, "dfabi", "c3"]] | map({lane: .[0], asset: .[1], pool_id: (.[2] * 32), route: "cm91dGU=", policy: "cG9saWN5", governance: "Z292ZXJuYW5jZQ==", origin: [$o1, $o2], bundles: [{id: $o1, height: 7}]}), carriers: {}}' > "$PL2"
+for p in bank-a bank-b bank-c; do
+  gargs=(); gtok=(); [[ $p == bank-c ]] && { gargs=("${GW[@]}"); gtok=("${GWT[@]}"); }
+  out=$("$R" "$p" "$D" "$P" --audit-tls "${gargs[@]}" --aps --aps-pools "$PL2" 2>&1) || { fail "$p --aps v2 pools (4): render failed: $out"; continue; }
+  python3 -I scripts/check-driver.py "$p" "$D" "$H8" "$CHAIN" tls "${gtok[@]}" "aps:$PL2" <<<"$out" && ok "$p --aps v2 pools (4): renders and passes check-driver" || fails=$((fails + 1))
+  python3 -I -c 'import sys, json, yaml; d = next(d for d in yaml.safe_load_all(sys.stdin) if d and d["metadata"]["name"] == "aps-pools"); p = json.loads(d["data"]["pools.json"]); assert [(e["lane"], e["asset"]) for e in p["pools"]] == [(1, "rd"), (1, "dfabi"), (2, "rd"), (2, "dfabi")] and p["version"] == 2 and all(e["bundles"] == [] for e in p["pools"])' <<<"$out" && ok "$p v2 pools embedded in order, bundles []" || fail "$p v2 pools not embedded as given"
+done
+for spec in 'a v2 file with a duplicate (lane, asset)|.pools[3] = .pools[0]' 'a v2 file with version 3|.version = 3' 'a v2 file without version|del(.version)' 'a v2 file without pools|.pools = []' 'a v2 file with 5 pools|.pools += [.pools[0] | .lane = 3]' 'a v2 pool with an unknown asset|.pools[0].asset = "usd"' 'a v2 pool with a non-integer lane|.pools[0].lane = "1"' 'a v2 pool with a negative lane|.pools[0].lane = -1' 'a v2 pool with an extra secret field|.pools[0].seed = "x"' 'a v2 pool_id that is not 64 hex|.pools[2].pool_id = "7e"' 'a v2 file with an extra top-level field|.seed = "x"' 'a v2 file mixed with a legacy record|.rd = .pools[0]' 'a v2 carriers map that is not hex to hex|.carriers = {"zz": "x"}'; do
+  label=${spec%%|*}; filter=${spec#*|}
+  jq "$filter" "$PL2" > "$T/bad.json"
+  err=$("$R" bank-a "$D" "$P" --audit-tls --aps --aps-pools "$T/bad.json" 2>&1 >/dev/null); rc=$?
+  [[ $rc -eq 2 && $err == *"Pool"* ]] && ok "refuses $label (exit 2)" || fail "$label not refused as expected (rc=$rc: $err)"
+done
+out=$("$R" bank-a "$D" "$P" --audit-tls --aps --aps-pools "$PL2")
+m=$(python3 -I -c '
+import sys, json, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+a = next(d for d in docs if d["metadata"]["name"] == "aps-pools"); p = json.loads(a["data"]["pools.json"]); p["pools"][3]["pool_id"] = "0" * 64; a["data"]["pools.json"] = json.dumps(p)
+print("\n---\n".join(json.dumps(d) for d in docs))' <<<"$out")
+python3 -I scripts/check-driver.py bank-a "$D" "$H8" "$CHAIN" tls "aps:$PL2" <<<"$m" >/dev/null 2>&1 && fail "MUTANT: a changed v2 pool id passed" || ok "MUTANT: a v2 aps-pools with a changed pool id FAILS the checker"
 apsmut() { # <label> <party> <python statement on the rendered docs list>
   local p=$2 good m ptok rargs=(--audit-tls "${APS[@]}") cargs=(tls)
   [[ $p == bi ]] && { rargs=(--audit-tls "${APSBI[@]}" --remote-gw bank-c=$BCGW); cargs+=("gw:bank-c=$BCGW"); }
