@@ -323,7 +323,8 @@ else:
             bad.append("BI --aps: no ConfigMap aps-pools (the pools are the PVC pools-v2)")
     else:
         want_pools = json.load(open(aps))
-        for r in want_pools.values():
+        v2 = "pools" in want_pools  # v2 pool index {version: 2, pools: [{lane, asset, ...record}], carriers} or the legacy {rd, dfabi}
+        for r in (want_pools["pools"] if v2 else want_pools.values()):
             r["bundles"] = []  # the bank driver fetches the bundle index from BI at runtime (T2): the seed never carries one
         if ap is None:
             bad.append("missing ConfigMap aps-pools")
@@ -332,8 +333,14 @@ else:
         else:
             got = json.loads(ap["data"]["pools.json"])
             rec = {"pool_id", "route", "policy", "governance", "origin", "bundles"}
-            if got != want_pools or set(got) != {"rd", "dfabi"} or any(set(v) != rec for v in got.values()):
-                bad.append(f"aps-pools pools.json must be the given public pools file (bundles []) with exactly rd/dfabi records of {sorted(rec)}: {sorted(got)}")
+            if v2:
+                ents = got.get("pools", []) if isinstance(got, dict) else []
+                shape = (got.get("version") == 2 and set(got) <= {"version", "pools", "carriers"} and 1 <= len(ents) <= 4 and all(set(e) == rec | {"lane", "asset"} and e["asset"] in ("rd", "dfabi") for e in ents)
+                         and len({(e["lane"], e["asset"]) for e in ents}) == len(ents))
+            else:
+                shape = set(got) == {"rd", "dfabi"} and all(set(v) == rec for v in got.values())
+            if got != want_pools or not shape:
+                bad.append(f"aps-pools pools.json must be the given public pools file (bundles []), legacy rd/dfabi records or v2 version 2 with 1..4 unique (lane, asset) pools, each of {sorted(rec)}: {sorted(got)}")
     gwe = by.get(("ConfigMap", "driver-gw-envoy"))
     if party == "bi":
         if gwe is None or set(gwe["data"]) != {"envoy.yaml"}:

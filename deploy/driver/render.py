@@ -39,17 +39,32 @@ if not isinstance(carrier, int) or isinstance(carrier, bool) or not 0 < carrier 
 # nothing is invented here; the shape is checked so a stray field (a key, a note) can never ride along.
 POOL_FIELDS = {"pool_id", "route", "policy", "governance", "origin", "bundles"}
 pools = None
+HEX = r"([0-9a-f]{2})+"
+B64 = r"[A-Za-z0-9+/]+={0,2}"
+def record_ok(r):  # one PoolRecord's fields (the v2 entry adds lane + asset on top)
+    return (isinstance(r.get("pool_id"), str) and re.fullmatch(r"[0-9a-f]{64}", r["pool_id"]) and all(isinstance(r.get(f), str) and re.fullmatch(B64, r[f]) for f in ("route", "policy", "governance"))
+            and isinstance(r.get("origin"), list) and len(r["origin"]) == 2 and all(isinstance(o, str) and re.fullmatch(HEX, o) for o in r["origin"])
+            and isinstance(r.get("bundles"), list))
+def pool_file_ok(pf):  # legacy {rd, dfabi} or v2 {version: 2, pools: [1..4 x {lane, asset, ...record}], carriers?} (node-build driver/src/pools.rs PoolFile::load)
+    if not isinstance(pf, dict):
+        return False
+    if "version" in pf or "pools" in pf:
+        ents = pf.get("pools")
+        if pf.get("version") != 2 or type(pf["version"]) is not int or not set(pf) <= {"version", "pools", "carriers"} or not isinstance(ents, list) or not 1 <= len(ents) <= 4:
+            return False
+        car = pf.get("carriers", {})
+        if not isinstance(car, dict) or not all(isinstance(k, str) and isinstance(v, str) and re.fullmatch(HEX, k) and re.fullmatch(HEX, v) for k, v in car.items()):
+            return False
+        if not all(isinstance(e, dict) and set(e) == POOL_FIELDS | {"lane", "asset"} and type(e["lane"]) is int and 0 <= e["lane"] < 2**32 and e["asset"] in ("rd", "dfabi") and record_ok(e) for e in ents):
+            return False
+        return len({(e["lane"], e["asset"]) for e in ents}) == len(ents)
+    return set(pf) == {"rd", "dfabi"} and all(isinstance(r, dict) and set(r) == POOL_FIELDS and record_ok(r) for r in pf.values())
 if aps_pools:
     pools = json.load(open(aps_pools))
-    if set(pools) != {"rd", "dfabi"} or any(not isinstance(r, dict) or set(r) != POOL_FIELDS for r in pools.values()):
-        print(f"render.sh: {aps_pools} must be a PoolFile: exactly rd and dfabi, each with exactly {sorted(POOL_FIELDS)}", file=sys.stderr)
+    if not pool_file_ok(pools):
+        print(f"render.sh: {aps_pools} must be a PoolFile: legacy {{rd, dfabi}} or v2 {{version: 2, pools: 1..4 unique (lane, asset) entries, carriers}}; each record exactly {sorted(POOL_FIELDS)} (pool_id 64 lowercase hex, route/policy/governance base64, origin 2 hex commitments, bundles list)", file=sys.stderr)
         sys.exit(2)
-    for k, r in pools.items():
-        if not (re.fullmatch(r"[0-9a-f]{64}", r["pool_id"]) and all(isinstance(r[f], str) and re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", r[f]) for f in ("route", "policy", "governance"))
-                and isinstance(r["origin"], list) and len(r["origin"]) == 2 and all(isinstance(o, str) and re.fullmatch(r"([0-9a-f]{2})+", o) for o in r["origin"])
-                and isinstance(r["bundles"], list)):
-            print(f"render.sh: {aps_pools}: {k} record is not a PoolRecord (pool_id 64 lowercase hex, route/policy/governance base64, origin 2 hex commitments, bundles list)", file=sys.stderr)
-            sys.exit(2)
+    for r in (pools["pools"] if "pools" in pools else pools.values()):
         r["bundles"] = []  # the bank driver fetches the bundle index from BI at runtime (T2): the seed never carries one
 aps_coordinator = aps and party == "bi"
 if aps_coordinator:
