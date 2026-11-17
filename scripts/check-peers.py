@@ -38,6 +38,7 @@ if sts:
         "priorityClassName": ("priorityClassName" not in pod) if c2 else pod["priorityClassName"] == "rd-iroha3-peer",
         "args": c["args"] == ["--sora", "--config", "/config/peer.toml"],
         "startup /livez": c["startupProbe"]["httpGet"]["path"] == "/livez",
+        "startup budget >= 20 min (Kura replay on restart)": c["startupProbe"]["periodSeconds"] * c["startupProbe"]["failureThreshold"] >= 1200,
         "liveness /livez": c["livenessProbe"]["httpGet"]["path"] == "/livez",
         "readiness /readyz": c["readinessProbe"]["httpGet"]["path"] == "/readyz",
         "requests": c["resources"]["requests"] == {"cpu": "250m", "memory": "512Mi" if c2 else "1Gi"},

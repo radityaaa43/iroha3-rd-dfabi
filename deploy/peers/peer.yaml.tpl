@@ -131,12 +131,14 @@ spec:
               cpu: 2000m
               memory: 3Gi
           # /livez is process-only; /readyz includes consensus admission. timeoutSeconds 3 (default 1).
+          # startup budget 5 s x 240 = 20 min: a restart replays Kura (Strict init ~130 s at ~500 blocks on bank-c,
+          # 2026-11-17) and loads the snapshot before /livez listens; 60 (5 min) killed bank-c in a restart loop and grows with height.
           startupProbe:
             httpGet:
               path: /livez
               port: api
             periodSeconds: 5
-            failureThreshold: 60
+            failureThreshold: 240
           livenessProbe:
             httpGet:
               path: /livez
