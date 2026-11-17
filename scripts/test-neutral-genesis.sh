@@ -73,7 +73,15 @@ jq '.transactions[1].instructions[1].Register.AssetDefinition.description += " p
 # sponsor with a direct read grant but no role, and with a read grant on only one dataspace
 jq 'del(.transactions[0].instructions[] | select(.Register.Role.grant_to? == "sponsor-account-id"))' "$T/g1.json" > "$T/g1norole.json"
 jq 'del(.transactions[0].instructions[] | select(.Grant.Permission.destination? == "sponsor-account-id" and .Grant.Permission.object.payload.dataspace == 2))' "$T/g1.json" > "$T/g1one.json"
+# S5 shape (assemble-s5.sh, live reset2 2026-11-17): bi replaces the localnet client account and is funded by its fee mints (not 1000);
+# the 1000-XOR mints go to bi-gov, A, B, C and the sponsor. The three readers (bi, A, B) are still funded accounts.
+jq '(.transactions[].instructions[] | objects | select(.Mint.Asset.destination? == "6TEAJqbb8oEPmLncoNiMRbLEK6tw#BI") | .Mint.Asset.destination) = "6TEAJqbb8oEPmLncoNiMRbLEK6tw#GOV"
+  | .transactions[0].instructions += [{Mint:{Asset:{destination:"6TEAJqbb8oEPmLncoNiMRbLEK6tw#BI",object:"1000000000"}}}]' "$T/g0.json" > "$T/gs5.json"
+# a reader that holds no fee asset at all is not a party
+jq '(.transactions[].instructions[] | objects | select(.Grant.Permission.destination? == "B") | .Grant.Permission.destination) = "UNFUNDED"' "$T/g0.json" > "$T/gstray.json"
 cg() { python3 -I network/check-genesis.py "$1" network/nexus.toml "$SPONSOR" "$2" >/dev/null 2>&1; }
+cg "$T/gs5.json" 0 && ok "check-genesis: S5 shape (bi funded by the template's mints, bi-gov by 1000 XOR) passes" || fail "check-genesis: refuses the S5 genesis shape (readers bi, A, B are funded, bi not by exactly 1000 XOR)"
+cg "$T/gstray.json" 0 && fail "check-genesis: accepts a restricted-dataspace reader that holds no fee asset" || ok "check-genesis: refuses a reader that is not a funded account"
 cg "$T/g0.json" 0 && ok "check-genesis: SPONSOR_READ=0, sponsor without permission passes" || fail "check-genesis: SPONSOR_READ=0 on a genesis without sponsor permission"
 cg "$T/g1.json" 1 && ok "check-genesis: SPONSOR_READ=1, sponsor reads dataspaces 1 and 2 (direct + role) and nothing else passes" || fail "check-genesis: SPONSOR_READ=1 on a genesis with the sponsor read grants"
 cg "$T/g1.json" 0 && fail "check-genesis: SPONSOR_READ=0 accepts a sponsor that holds read grants" || ok "check-genesis: SPONSOR_READ=0 refuses a sponsor that holds read grants"
