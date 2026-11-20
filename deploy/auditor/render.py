@@ -66,8 +66,9 @@ toml = "\n".join(
         f'key_name = "{key_name}"',
         'listen = "0.0.0.0:8090"',
         'store_dir = "/audit-store"',
-        "max_rd = 10000000000   # = max_dfabi x 10^6 (Lensa prices one DFABI at 10^6 RD)",
-        "max_dfabi = 10000",
+        # = BI's origin reserve per pool from chain #4 (2e15 RD / 2e9 DFABI over two pools): a leg up to one pool's reserve passes
+        "max_rd = 1000000000000000   # = max_dfabi x 10^6 (Lensa prices one DFABI at 10^6 RD)",
+        "max_dfabi = 1000000000",
         "parties = [" + ", ".join(json.dumps(k) for k in parties_keys) + "]",
         "",
     ]
