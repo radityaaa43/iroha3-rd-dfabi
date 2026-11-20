@@ -94,14 +94,23 @@ sponsor_vault_custody_account_id = "@GAS_TECH_ACCOUNT_ID@"
 local_budget_bytes = 3221225472
 
 # Atomic private settlement: shipped defaults except the activation notice, cut
-# from 7200 to 10 blocks for the PoC. activation_height = proposed_at_height of the
+# from 7200 to 10 blocks for the PoC, and the expiry/retention/sidecar bounds below. activation_height = proposed_at_height of the
 # privacy-protocol activation in genesis (1) + minimum_activation_notice_blocks (state.rs
 # ensure_private_settlement_feature_active_v1).
 [nexus.atomic_private_settlement]
 enabled = true
 activation_height = 11
 minimum_activation_notice_blocks = 10
-max_expiry_blocks = 7200
-audit_timeout_blocks = 1200
-prepare_timeout_blocks = 1200
-commit_timeout_blocks = 1200
+# Sidecar retention is counted in blocks, and this chain makes a block only when a tx arrives (~6 per
+# bundle). The shipped 1_000_000 then never expires, so every peer's store fills at 256 records
+# (~128 bundles) and each availability upload answers 503 (chain #3, 2026-11-17). 1200 is the
+# smallest value upstream accepts (sidecar_retention_blocks >= max_expiry_blocks; the phase timeouts
+# must sum to <= max_expiry_blocks). The driver signs EXPIRY_BLOCKS = 1000 <= 1200 and
+# retention_until = context + SIDECAR_RETENTION_BLOCKS (= this value) + 512. 4096 = upstream ceiling.
+# All of these feed execution_policy_hash in the signed genesis: changing them needs a new genesis.
+max_expiry_blocks = 1200
+audit_timeout_blocks = 400
+prepare_timeout_blocks = 400
+commit_timeout_blocks = 400
+sidecar_retention_blocks = 1200
+sidecar_max_records = 4096
